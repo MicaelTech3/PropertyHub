@@ -21,6 +21,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  username: string;
+  password?: string;
   role: Role;
   accessPin?: string;
   createdAt?: string;
@@ -87,9 +89,9 @@ const SAMPLE_PHOTOS = [
 
 // INITIAL DATA
 const INITIAL_USERS: User[] = [
-  { id: "joao", name: "João Silva", email: "joao@exemplo.com", role: "owner", accessPin: "102030", createdAt: "10/10/2024" },
-  { id: "maria", name: "Maria Costa", email: "maria@exemplo.com", role: "owner", accessPin: "405060", createdAt: "11/10/2024" },
-  { id: "admin", name: "Administrador", email: "admin@gestao.com", role: "admin", createdAt: "01/10/2024" },
+  { id: "joao", name: "João Silva", email: "joao@exemplo.com", username: "joao", password: "123", role: "owner", accessPin: "102030", createdAt: "10/10/2024" },
+  { id: "maria", name: "Maria Costa", email: "maria@exemplo.com", username: "maria", password: "123", role: "owner", accessPin: "405060", createdAt: "11/10/2024" },
+  { id: "admin", name: "Administrador", email: "admin@gestao.com", username: "admin", password: "admin123", role: "admin", createdAt: "01/10/2024" },
 ];
 
 const INITIAL_PROPERTIES: Property[] = [
@@ -530,14 +532,23 @@ export default function App() {
       const ownerParam = p.get("owner");
       if (ownerParam) {
         const found = INITIAL_USERS.find(
-          (u) => u.id === ownerParam || u.email.toLowerCase() === ownerParam.toLowerCase()
+          (u) =>
+            u.id === ownerParam ||
+            u.email.toLowerCase() === ownerParam.toLowerCase() ||
+            u.username.toLowerCase() === ownerParam.toLowerCase()
         );
         if (found) return found;
       }
+      const saved = localStorage.getItem("propertyhub_user");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {}
+      }
     }
-    return INITIAL_USERS[2]; // Default admin demo
+    return null; // Exibe tela de login unificada se não houver sessão ativa
   });
-  const [loginEmail, setLoginEmail] = useState("");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -599,8 +610,9 @@ export default function App() {
 
   // Form State: Novo Proprietário
   const [newOwnerName, setNewOwnerName] = useState("");
+  const [newOwnerUsername, setNewOwnerUsername] = useState("");
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
-  const [newOwnerPin, setNewOwnerPin] = useState("");
+  const [newOwnerPassword, setNewOwnerPassword] = useState("");
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -645,6 +657,7 @@ export default function App() {
             id: firebaseUser.uid,
             name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "Administrador",
             email: firebaseUser.email || "admin@gestao.com",
+            username: firebaseUser.email?.split("@")[0] || "admin",
             role: "admin",
           };
           setCurrentUser(adminObj);
@@ -736,11 +749,17 @@ export default function App() {
     return properties.filter((p) => p.ownerId === currentUser.id);
   }, [properties, currentUser]);
 
+  const userPropertyIds = useMemo(() => {
+    return new Set(userProperties.map((p) => p.id));
+  }, [userProperties]);
+
   const userReservations = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role === "admin") return reservations;
-    return reservations.filter((r) => r.ownerId === currentUser.id);
-  }, [reservations, currentUser]);
+    return reservations.filter(
+      (r) => r.ownerId === currentUser.id || userPropertyIds.has(r.propertyId)
+    );
+  }, [reservations, currentUser, userPropertyIds]);
 
   const ownersList = useMemo(() => {
     return usersList.filter((u) => u.role === "owner");
@@ -796,45 +815,76 @@ export default function App() {
     return userReservations.filter((r) => r.status === reservationFilter);
   }, [userReservations, reservationFilter]);
 
-  // --- LOGIN ADMIN VIA FIREBASE AUTH ---
-  const handleAdminLogin = async (e: React.FormEvent) => {
+  // --- LOGIN UNIFICADO (ADMIN OU PROPRIETÁRIO PELO BANCO) ---
+  const handleUnifiedLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError(null);
 
+    const ident = loginIdentifier.trim().toLowerCase();
+    const pass = loginPassword.trim();
+
+    if (!ident || !pass) {
+      setAuthError("Informe o usuário ou e-mail e a senha.");
+      setAuthLoading(false);
+      return;
+    }
+
+    // 1. Procura primeiro na lista de usuários sincronizada do Firestore
+    const matchedUser = usersList.find(
+      (u) =>
+        (u.username && u.username.toLowerCase() === ident) ||
+        (u.email && u.email.toLowerCase() === ident)
+    );
+
+    if (matchedUser && matchedUser.password === pass) {
+      setCurrentUser(matchedUser);
+      localStorage.setItem("propertyhub_user", JSON.stringify(matchedUser));
+      setActiveTab("dashboard");
+      setViewingOwnerDetail(null);
+      showToast(`Bem-vindo, ${matchedUser.name}! (${matchedUser.role === "admin" ? "Administrador" : "Proprietário"})`);
+      setAuthLoading(false);
+      return;
+    }
+
+    // 2. Se for admin autenticado pelo Firebase Auth
     try {
-      const cred = await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+      const emailToAuth = matchedUser?.email || (ident.includes("@") ? ident : `${ident}@gestao.com`);
+      const cred = await signInWithEmailAndPassword(auth, emailToAuth, pass);
       if (cred.user) {
         const found = usersList.find((u) => u.email.toLowerCase() === cred.user.email?.toLowerCase());
-        const loggedAdmin: User = found || {
+        const loggedUser: User = found || {
           id: cred.user.uid,
           name: cred.user.displayName || cred.user.email?.split("@")[0] || "Administrador",
-          email: cred.user.email || loginEmail,
+          email: cred.user.email || ident,
+          username: cred.user.email?.split("@")[0] || "admin",
           role: "admin",
         };
-        setCurrentUser(loggedAdmin);
+        setCurrentUser(loggedUser);
+        localStorage.setItem("propertyhub_user", JSON.stringify(loggedUser));
         setActiveTab("dashboard");
-        showToast(`Bem-vindo, ${loggedAdmin.name}! Autenticado no Firebase.`);
+        setViewingOwnerDetail(null);
+        showToast(`Bem-vindo, ${loggedUser.name}! (Firebase Auth)`);
         setAuthLoading(false);
         return;
       }
-    } catch (err: any) {
-      console.warn("Erro no login Firebase Auth:", err);
-      // Fallback amigável caso a conta admin ainda não tenha sido cadastrada no Firebase Auth
-      if (loginEmail.toLowerCase().includes("admin") && loginPassword.length >= 4) {
-        const adminFallback: User = {
-          id: "admin-fb-" + Date.now(),
-          name: "Administrador",
-          email: loginEmail.trim(),
-          role: "admin",
-        };
-        setCurrentUser(adminFallback);
-        setActiveTab("dashboard");
-        showToast(`Bem-vindo, Administrador (${loginEmail})!`);
-      } else {
-        setAuthError("E-mail ou senha inválidos no Firebase Auth. Verifique suas credenciais.");
-      }
+    } catch (fbErr: any) {
+      console.warn("Tentativa Firebase Auth:", fbErr?.code);
     }
+
+    // 3. Fallback demo admin
+    if ((ident === "admin" || ident === "admin@gestao.com") && (pass === "admin123" || pass === "admin")) {
+      const adminObj = INITIAL_USERS[2];
+      setCurrentUser(adminObj);
+      localStorage.setItem("propertyhub_user", JSON.stringify(adminObj));
+      setActiveTab("dashboard");
+      setViewingOwnerDetail(null);
+      showToast("Bem-vindo, Administrador!");
+      setAuthLoading(false);
+      return;
+    }
+
+    setAuthError("Usuário ou senha incorretos. Verifique suas credenciais.");
     setAuthLoading(false);
   };
 
@@ -842,29 +892,40 @@ export default function App() {
     try {
       await signOut(auth);
     } catch (e) {}
-    // Limpa parâmetros de URL
+    localStorage.removeItem("propertyhub_user");
     window.history.replaceState({}, document.title, window.location.pathname);
     setCurrentUser(null);
-    setLoginEmail("");
+    setLoginIdentifier("");
     setLoginPassword("");
     setViewingOwnerDetail(null);
     setMobileMenuOpen(false);
+    showToast("Sessão encerrada com sucesso.");
   };
 
-  // --- CREATE OWNER ---
+  // --- CADASTRAR PROPRIETÁRIO COM USER E SENHA NO BANCO ---
   const handleCreateOwner = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOwnerName.trim() || !newOwnerEmail.trim()) return;
+    if (!newOwnerName.trim() || !newOwnerUsername.trim() || !newOwnerPassword.trim()) {
+      showToast("Preencha nome, usuário e senha para cadastrar o proprietário.");
+      return;
+    }
+
+    const cleanUsername = newOwnerUsername.trim().toLowerCase();
+    const cleanEmail = newOwnerEmail.trim().toLowerCase() || `${cleanUsername}@propertyhub.local`;
+
+    if (usersList.some((u) => u.username?.toLowerCase() === cleanUsername)) {
+      showToast("⚠️ Este nome de usuário já está em uso. Escolha outro.");
+      return;
+    }
 
     const ownerId = "owner-" + Date.now();
-    const pin = newOwnerPin.trim() || String(Math.floor(100000 + Math.random() * 900000));
-
     const newOwner: User = {
       id: ownerId,
       name: newOwnerName.trim(),
-      email: newOwnerEmail.trim().toLowerCase(),
+      username: cleanUsername,
+      email: cleanEmail,
+      password: newOwnerPassword.trim(),
       role: "owner",
-      accessPin: pin,
       createdAt: new Date().toLocaleDateString("pt-BR"),
     };
 
@@ -878,12 +939,23 @@ export default function App() {
 
     setIsNewOwnerModalOpen(false);
     setNewOwnerName("");
+    setNewOwnerUsername("");
     setNewOwnerEmail("");
-    setNewOwnerPin("");
-    showToast(`✓ Proprietário ${newOwner.name} cadastrado com sucesso!`);
+    setNewOwnerPassword("");
+    showToast(`✓ Proprietário ${newOwner.name} gravado no banco com usuário "${cleanUsername}" e senha configurada!`);
   };
 
-  // --- COPY LINK DIRETO DO PROPRIETÁRIO ---
+  // --- COPIAR CREDENCIAIS DE ACESSO DO PROPRIETÁRIO (WHATSAPP) ---
+  const handleCopyOwnerCredentials = (owner: User) => {
+    const origin = window.location.origin + window.location.pathname;
+    const textToCopy = `🔑 *Acesso ao Portal do Proprietário*\n\nOlá ${owner.name}, aqui estão seus dados de acesso:\n🌐 Link: ${origin}\n👤 Usuário: ${owner.username || owner.email}\n🔐 Senha: ${owner.password || "(senha configurada)"}\n\nVocê também pode acessar diretamente por: ${origin}?owner=${owner.id}`;
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      showToast(`✓ Dados de acesso (Usuário e Senha) de ${owner.name} copiados! Pronto para colar no WhatsApp.`);
+    }).catch(() => {
+      showToast(`Usuário: ${owner.username} | Senha: ${owner.password}`);
+    });
+  };
+
   const handleCopyOwnerLink = (owner: User) => {
     const origin = window.location.origin + window.location.pathname;
     const directLink = `${origin}?owner=${owner.id}`;
@@ -1147,7 +1219,7 @@ export default function App() {
   };
 
   // =========================================
-  // RENDER: LOGIN ADMIN EXCLUSIVO FIREBASE
+  // RENDER: LOGIN GERAL (ADMIN OU PROPRIETÁRIO)
   // =========================================
   if (!currentUser) {
     return (
@@ -1160,10 +1232,10 @@ export default function App() {
         </div>
 
         <div className="login-card">
-          <span className="login-admin-badge">Área Restrita Administrativa</span>
-          <h1 className="login-card-title">Acesso do Administrador</h1>
+          <span className="login-admin-badge">Acesso ao Sistema</span>
+          <h1 className="login-card-title">Entrar na Plataforma</h1>
           <p className="login-card-subtitle">
-            Faça login com seu e-mail e senha do Firebase para gerenciar os imóveis e proprietários.
+            Informe seu usuário ou e-mail e sua senha cadastrada no banco de dados. O sistema identifica automaticamente seu tipo de acesso.
           </p>
 
           {authError && (
@@ -1172,15 +1244,16 @@ export default function App() {
             </div>
           )}
 
-          <form className="login-form" onSubmit={handleAdminLogin}>
+          <form className="login-form" onSubmit={handleUnifiedLogin}>
             <div className="input-group">
               <IconUsers size={18} />
               <input
-                type="email"
-                placeholder="admin@gestao.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
+                type="text"
+                placeholder="Seu usuário ou e-mail"
+                value={loginIdentifier}
+                onChange={(e) => setLoginIdentifier(e.target.value)}
                 required
+                autoFocus
               />
             </div>
 
@@ -1188,7 +1261,7 @@ export default function App() {
               <IconSettings size={18} />
               <input
                 type="password"
-                placeholder="Sua senha do Firebase"
+                placeholder="Sua senha de acesso"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 required
@@ -1196,13 +1269,50 @@ export default function App() {
             </div>
 
             <button type="submit" className="btn-login-submit" disabled={authLoading}>
-              {authLoading ? "Verificando..." : "Entrar como Administrador"}
+              {authLoading ? "Verificando no banco..." : "Entrar na Plataforma"}
             </button>
           </form>
 
-          <p className="login-footer-hint">
-            <strong>Dica:</strong> Proprietários não necessitam de login. Eles acessam diretamente através do link exclusivo gerado pelo Administrador.
-          </p>
+          <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px dashed var(--border-light)" }}>
+            <p style={{ fontSize: "11.5px", color: "var(--text-secondary)", marginBottom: "8px", textAlign: "center" }}>
+              <strong>Acesso Rápido de Teste:</strong>
+            </p>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "center" }}>
+              <button
+                type="button"
+                className="filter-pill"
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+                onClick={() => {
+                  setLoginIdentifier("admin");
+                  setLoginPassword("admin123");
+                }}
+              >
+                🛡️ Admin (admin)
+              </button>
+              <button
+                type="button"
+                className="filter-pill"
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+                onClick={() => {
+                  setLoginIdentifier("joao");
+                  setLoginPassword("123");
+                }}
+              >
+                👤 João (joao)
+              </button>
+              <button
+                type="button"
+                className="filter-pill"
+                style={{ fontSize: "11px", padding: "4px 10px" }}
+                onClick={() => {
+                  setLoginIdentifier("maria");
+                  setLoginPassword("123");
+                }}
+              >
+                👤 Maria (maria)
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1507,15 +1617,32 @@ export default function App() {
                     <div className="owner-profile-title">
                       <h1>{viewingOwnerDetail.name}</h1>
                       <p>{viewingOwnerDetail.email} • Cadastrado em {viewingOwnerDetail.createdAt || "Hoje"}</p>
+                      <div style={{ display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ fontSize: "12px", background: "rgba(37, 99, 235, 0.12)", color: "var(--brand-primary)", padding: "4px 10px", borderRadius: "8px", fontWeight: 600, border: "1px solid rgba(37,99,235,0.25)" }}>
+                          👤 Usuário: <strong>{viewingOwnerDetail.username || viewingOwnerDetail.email}</strong>
+                        </span>
+                        {viewingOwnerDetail.password && (
+                          <span style={{ fontSize: "12px", background: "rgba(16, 185, 129, 0.12)", color: "var(--accent-green)", padding: "4px 10px", borderRadius: "8px", fontWeight: 600, border: "1px solid rgba(16,185,129,0.25)" }}>
+                            🔑 Senha: <strong>{viewingOwnerDetail.password}</strong>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="owner-profile-actions">
                     <button
+                      className="btn-primary"
+                      onClick={() => handleCopyOwnerCredentials(viewingOwnerDetail)}
+                      title="Copiar dados de acesso completos (usuário, senha e link) para enviar por WhatsApp"
+                    >
+                      <IconCopy size={15} /> Copiar Acesso (WhatsApp)
+                    </button>
+                    <button
                       className="btn-secondary"
                       onClick={() => handleCopyOwnerLink(viewingOwnerDetail)}
                     >
-                      <IconCopy size={15} /> Copiar Link de Acesso
+                      <IconCopy size={15} /> Copiar Link Direto
                     </button>
                     <button
                       className="btn-secondary"
@@ -2319,6 +2446,18 @@ export default function App() {
                 </label>
 
                 <label className="form-label">
+                  Usuário de Login (Username)
+                  <input
+                    className="form-input"
+                    type="text"
+                    placeholder="Ex: carloseduardo"
+                    value={newOwnerUsername}
+                    onChange={(e) => setNewOwnerUsername(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="form-label">
                   E-mail do Proprietário
                   <input
                     className="form-input"
@@ -2331,18 +2470,19 @@ export default function App() {
                 </label>
 
                 <label className="form-label">
-                  PIN de Acesso Direto (Opcional)
+                  Senha de Acesso
                   <input
                     className="form-input"
-                    type="text"
-                    placeholder="Ex: 504030 (Gerado automaticamente se vazio)"
-                    value={newOwnerPin}
-                    onChange={(e) => setNewOwnerPin(e.target.value)}
+                    type="password"
+                    placeholder="Defina uma senha segura"
+                    value={newOwnerPassword}
+                    onChange={(e) => setNewOwnerPassword(e.target.value)}
+                    required
                   />
                 </label>
 
                 <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px", fontSize: "12px", color: "var(--text-secondary)" }}>
-                  🔗 O proprietário receberá um link direto para visualizar exclusivamente os imóveis dele, sem precisar criar senha ou logar.
+                  🔐 <strong>Gravado no Banco:</strong> O proprietário utilizará este usuário e senha na tela de login para acessar exclusivamente os imóveis dele.
                 </div>
               </div>
 
