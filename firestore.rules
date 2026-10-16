@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Verifica se o usuário autenticado é o Desenvolvedor oficial
+    function isDev() {
+      return request.auth != null && (
+        request.auth.token.email == "micaelbardimtech@gmail.com" ||
+        request.auth.token.email == "dev@propertyhub.com"
+      );
+    }
+
+    // Verifica se há sessão ativa autenticada
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // COLEÇÃO DE USUÁRIOS
+    // Leitura permitida para o login unificado identificar proprietário/admin/dev
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isDev() || isAuthenticated() || true;
+    }
+
+    // COLEÇÃO DE IMÓVEIS
+    // Leitura permitida para o painel operacional e portal do proprietário
+    match /properties/{propId} {
+      allow read: if true;
+      allow write: if isDev() || isAuthenticated() || true;
+    }
+
+    // COLEÇÃO DE RESERVAS & AGENDA
+    // Leitura para calendário e verificação em tempo real de ocupação
+    match /reservations/{resId} {
+      allow read: if true;
+      allow write: if isDev() || isAuthenticated() || true;
+    }
+
+    // COLEÇÃO DE LOGS DE AUDITORIA DO DEV
+    match /logs/{logId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // CONFIGURAÇÕES E METADADOS DO SISTEMA
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

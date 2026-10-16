@@ -13,9 +13,14 @@ import {
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
+import CalendarTab from "./CalendarTab";
+import DevTab from "./DevTab";
+import WikiTab from "./WikiTab";
+import { logActivity, loadLocalLogs, clearLocalLogs } from "./logger";
+import type { LogEntry } from "./logger";
 
 // --- TYPES ---
-export type Role = "owner" | "admin";
+export type Role = "owner" | "admin" | "dev";
 
 export interface User {
   id: string;
@@ -89,6 +94,7 @@ const SAMPLE_PHOTOS = [
 
 // INITIAL DATA
 const INITIAL_USERS: User[] = [
+  { id: "dev-micael", name: "Micael Bardim (Dev)", email: "micaelbardimtech@gmail.com", username: "micaelbardimtech", password: "dev", role: "dev", createdAt: "14/10/2024" },
   { id: "joao", name: "João Silva", email: "joao@exemplo.com", username: "joao", password: "123", role: "owner", accessPin: "102030", createdAt: "10/10/2024" },
   { id: "maria", name: "Maria Costa", email: "maria@exemplo.com", username: "maria", password: "123", role: "owner", accessPin: "405060", createdAt: "11/10/2024" },
   { id: "admin", name: "Administrador", email: "admin@gestao.com", username: "admin", password: "admin123", role: "admin", createdAt: "01/10/2024" },
@@ -302,15 +308,6 @@ function getRoomLiveStatus(roomId: string, reservations: Reservation[]): {
 }
 
 // --- ICONS ---
-function IconHome({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <polyline points="9 22 9 12 15 12 15 22" />
-    </svg>
-  );
-}
-
 function IconGrid({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -338,6 +335,14 @@ function IconCalendar({ size = 18 }: { size?: number }) {
       <line x1="16" y1="2" x2="16" y2="6" />
       <line x1="8" y1="2" x2="8" y2="6" />
       <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function IconBookmark({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
     </svg>
   );
 }
@@ -454,6 +459,15 @@ function IconExternalLink({ size = 14 }: { size?: number }) {
   );
 }
 
+function IconEdit({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
 function IconSun({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -506,6 +520,24 @@ function IconMapPin({ size = 14 }: { size?: number }) {
   );
 }
 
+function IconTerminal({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+
+function IconBook({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
 export default function App() {
   // Theme state (Claro / Escuro)
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -554,7 +586,46 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Tabs & Navigation
-  const [activeTab, setActiveTab] = useState<"dashboard" | "owners" | "properties" | "reservations" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "calendar" | "owners" | "properties" | "reservations" | "settings" | "dev" | "wiki">("dashboard");
+  const [logs, setLogs] = useState<LogEntry[]>(() => loadLocalLogs());
+
+  // Estado do Tour Interativo / Prático da Wiki
+  const [activeTour, setActiveTour] = useState<{
+    tourId: "create_property" | "create_reservation" | "assign_owner";
+    step: number;
+    totalSteps?: number;
+    title: string;
+    description: string;
+    actionHint: string;
+    targetTab: "properties" | "calendar" | "owners";
+    targetElementId: string;
+  } | null>(null);
+
+  // Modal & Form State: Editar Configurações do Imóvel
+  const [isEditPropertyModalOpen, setIsEditPropertyModalOpen] = useState(false);
+  const [editingProperty, setEditingProperty] = useState<Property | null>(null);
+  const [editPropName, setEditPropName] = useState("");
+  const [editPropType, setEditPropType] = useState<PropertyType>("APARTAMENTO");
+  const [editPropAddress, setEditPropAddress] = useState("");
+  const [editPropCity, setEditPropCity] = useState("");
+  const [editPropOwnerId, setEditPropOwnerId] = useState("");
+  const [editPropUrl, setEditPropUrl] = useState("");
+  const [editPropListingId, setEditPropListingId] = useState("");
+  const [editPropImg, setEditPropImg] = useState("");
+  const [editPropPrice, setEditPropPrice] = useState(250);
+  const [editPropGuests, setEditPropGuests] = useState(4);
+  const [editPropBedrooms, setEditPropBedrooms] = useState(2);
+  const [editPropBathrooms, setEditPropBathrooms] = useState(1);
+  const [editPropAmenities, setEditPropAmenities] = useState("");
+  const [editPropIcal, setEditPropIcal] = useState("");
+
+  // Modal & Form State: Editar Usuário (Nome e Senha)
+  const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserUsername, setEditUserUsername] = useState("");
+  const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserPassword, setEditUserPassword] = useState("");
 
   // Dedicated owner view (quando clica no card do proprietário)
   const [viewingOwnerDetail, setViewingOwnerDetail] = useState<User | null>(null);
@@ -585,12 +656,13 @@ export default function App() {
   // Reservation Filter
   const [reservationFilter, setReservationFilter] = useState<"Todas" | ReservationStatus>("Todas");
 
-  // Quick Reserve Target State
+  // Quick Reserve Target State (com status inicial selecionável: Confirmada ou Pendente)
   const [targetReserveProperty, setTargetReserveProperty] = useState<Property | null>(null);
   const [targetReserveRoom, setTargetReserveRoom] = useState<Room | null>(null);
   const [reserveGuestName, setReserveGuestName] = useState("");
   const [reserveStartDate, setReserveStartDate] = useState("2024-12-20");
   const [reserveEndDate, setReserveEndDate] = useState("2024-12-25");
+  const [reserveStatus, setReserveStatus] = useState<ReservationStatus>("Confirmada");
 
   // Form State: Novo Imóvel Airbnb Completo
   const [formPropName, setFormPropName] = useState("");
@@ -600,7 +672,7 @@ export default function App() {
   const [formPropOwnerId, setFormPropOwnerId] = useState(""); // "" = Sem proprietário
   const [formPropUrl, setFormPropUrl] = useState("");
   const [formPropListingId, setFormPropListingId] = useState("");
-  const [formPropImg, setFormPropImg] = useState(SAMPLE_PHOTOS[0]);
+  const [formPropImg, setFormPropImg] = useState("");
   const [formPropPrice, setFormPropPrice] = useState(250);
   const [formPropGuests, setFormPropGuests] = useState(4);
   const [formPropBedrooms, setFormPropBedrooms] = useState(2);
@@ -649,18 +721,25 @@ export default function App() {
       }
 
       if (firebaseUser) {
-        const found = usersList.find((u) => u.email.toLowerCase() === firebaseUser.email?.toLowerCase());
+        const emailLower = firebaseUser.email?.toLowerCase() || "";
+        const isDevUser = emailLower === "micaelbardimtech@gmail.com";
+        const found = usersList.find((u) => u.email.toLowerCase() === emailLower);
         if (found) {
-          setCurrentUser(found);
+          if (isDevUser && found.role !== "dev") {
+            const devUpgraded: User = { ...found, role: "dev" };
+            setCurrentUser(devUpgraded);
+          } else {
+            setCurrentUser(found);
+          }
         } else {
-          const adminObj: User = {
+          const userObj: User = {
             id: firebaseUser.uid,
-            name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "Administrador",
-            email: firebaseUser.email || "admin@gestao.com",
-            username: firebaseUser.email?.split("@")[0] || "admin",
-            role: "admin",
+            name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || (isDevUser ? "Micael Bardim (Dev)" : "Administrador"),
+            email: firebaseUser.email || (isDevUser ? "micaelbardimtech@gmail.com" : "admin@gestao.com"),
+            username: firebaseUser.email?.split("@")[0] || (isDevUser ? "micaelbardimtech" : "admin"),
+            role: isDevUser ? "dev" : "admin",
           };
-          setCurrentUser(adminObj);
+          setCurrentUser(userObj);
         }
       }
     });
@@ -672,13 +751,18 @@ export default function App() {
           const loaded: User[] = snapshot.docs.map((d) => d.data() as User);
           setUsersList(loaded);
         } else {
+          const baseStaff: User[] = [
+            { id: "dev-micael", name: "Micael Bardim (Dev)", email: "micaelbardimtech@gmail.com", username: "micaelbardimtech", password: "dev", role: "dev", createdAt: "14/10/2024" },
+            { id: "admin", name: "Administrador", email: "admin@gestao.com", username: "admin", password: "admin123", role: "admin", createdAt: "01/10/2024" },
+          ];
           try {
-            for (const user of INITIAL_USERS) {
+            for (const user of baseStaff) {
               await setDoc(doc(db, "users", user.id), user);
             }
           } catch (e) {
             console.warn("Seed users note:", e);
           }
+          setUsersList(baseStaff);
         }
       },
       (error) => console.warn("Users listener note:", error.message)
@@ -686,18 +770,12 @@ export default function App() {
 
     const unsubProps = onSnapshot(
       collection(db, "properties"),
-      async (snapshot) => {
+      (snapshot) => {
         if (!snapshot.empty) {
           const loaded: Property[] = snapshot.docs.map((d) => d.data() as Property);
           setProperties(loaded);
         } else {
-          try {
-            for (const prop of INITIAL_PROPERTIES) {
-              await setDoc(doc(db, "properties", prop.id), prop);
-            }
-          } catch (e) {
-            console.warn("Seed properties note:", e);
-          }
+          setProperties([]);
         }
       },
       (error) => console.warn("Properties listener note:", error.message)
@@ -705,18 +783,12 @@ export default function App() {
 
     const unsubRes = onSnapshot(
       collection(db, "reservations"),
-      async (snapshot) => {
+      (snapshot) => {
         if (!snapshot.empty) {
           const loaded: Reservation[] = snapshot.docs.map((d) => d.data() as Reservation);
           setReservations(loaded);
         } else {
-          try {
-            for (const res of INITIAL_RESERVATIONS) {
-              await setDoc(doc(db, "reservations", res.id), res);
-            }
-          } catch (e) {
-            console.warn("Seed reservations note:", e);
-          }
+          setReservations([]);
         }
       },
       (error) => console.warn("Reservations listener note:", error.message)
@@ -733,19 +805,35 @@ export default function App() {
       (error) => console.warn("Meta listener note:", error.message)
     );
 
+    const unsubLogs = onSnapshot(
+      collection(db, "logs"),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const loadedLogs: LogEntry[] = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          loadedLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          setLogs(loadedLogs);
+        }
+      },
+      (error) => console.warn("Logs listener note:", error.message)
+    );
+
     return () => {
       unsubscribeAuth();
       unsubUsers();
       unsubProps();
       unsubRes();
       unsubMeta();
+      unsubLogs();
     };
   }, []);
 
   // --- DATA FILTERING FOR USER ---
   const userProperties = useMemo(() => {
     if (!currentUser) return [];
-    if (currentUser.role === "admin") return properties;
+    if (currentUser.role === "admin" || currentUser.role === "dev") return properties;
     return properties.filter((p) => p.ownerId === currentUser.id);
   }, [properties, currentUser]);
 
@@ -755,7 +843,7 @@ export default function App() {
 
   const userReservations = useMemo(() => {
     if (!currentUser) return [];
-    if (currentUser.role === "admin") return reservations;
+    if (currentUser.role === "admin" || currentUser.role === "dev") return reservations;
     return reservations.filter(
       (r) => r.ownerId === currentUser.id || userPropertyIds.has(r.propertyId)
     );
@@ -840,31 +928,50 @@ export default function App() {
     if (matchedUser && matchedUser.password === pass) {
       setCurrentUser(matchedUser);
       localStorage.setItem("propertyhub_user", JSON.stringify(matchedUser));
-      setActiveTab("dashboard");
+      setActiveTab(matchedUser.role === "dev" ? "dev" : "dashboard");
       setViewingOwnerDetail(null);
-      showToast(`Bem-vindo, ${matchedUser.name}! (${matchedUser.role === "admin" ? "Administrador" : "Proprietário"})`);
+      const roleName = matchedUser.role === "dev" ? "Desenvolvedor" : matchedUser.role === "admin" ? "Administrador" : "Proprietário";
+      showToast(`Bem-vindo, ${matchedUser.name}! (${roleName})`);
+      logActivity({
+        actorName: matchedUser.name,
+        actorEmail: matchedUser.email,
+        actorRole: matchedUser.role,
+        category: "auth",
+        action: "LOGIN_SUCESSO",
+        description: `Login efetuado com sucesso como ${roleName}.`,
+      });
       setAuthLoading(false);
       return;
     }
 
-    // 2. Se for admin autenticado pelo Firebase Auth
+    // 2. Se for admin ou dev autenticado pelo Firebase Auth
     try {
       const emailToAuth = matchedUser?.email || (ident.includes("@") ? ident : `${ident}@gestao.com`);
       const cred = await signInWithEmailAndPassword(auth, emailToAuth, pass);
       if (cred.user) {
-        const found = usersList.find((u) => u.email.toLowerCase() === cred.user.email?.toLowerCase());
+        const emailLower = cred.user.email?.toLowerCase() || ident;
+        const isDevUser = emailLower === "micaelbardimtech@gmail.com";
+        const found = usersList.find((u) => u.email.toLowerCase() === emailLower);
         const loggedUser: User = found || {
           id: cred.user.uid,
-          name: cred.user.displayName || cred.user.email?.split("@")[0] || "Administrador",
+          name: cred.user.displayName || cred.user.email?.split("@")[0] || (isDevUser ? "Micael Bardim (Dev)" : "Administrador"),
           email: cred.user.email || ident,
-          username: cred.user.email?.split("@")[0] || "admin",
-          role: "admin",
+          username: cred.user.email?.split("@")[0] || (isDevUser ? "micaelbardimtech" : "admin"),
+          role: isDevUser ? "dev" : "admin",
         };
         setCurrentUser(loggedUser);
         localStorage.setItem("propertyhub_user", JSON.stringify(loggedUser));
-        setActiveTab("dashboard");
+        setActiveTab(isDevUser ? "dev" : "dashboard");
         setViewingOwnerDetail(null);
-        showToast(`Bem-vindo, ${loggedUser.name}! (Firebase Auth)`);
+        showToast(`Bem-vindo, ${loggedUser.name}! (${isDevUser ? "Desenvolvedor" : "Administrador"})`);
+        logActivity({
+          actorName: loggedUser.name,
+          actorEmail: loggedUser.email,
+          actorRole: loggedUser.role,
+          category: "auth",
+          action: "LOGIN_FIREBASE_AUTH",
+          description: `Login autenticado via Firebase Auth (${loggedUser.role}).`,
+        });
         setAuthLoading(false);
         return;
       }
@@ -872,14 +979,47 @@ export default function App() {
       console.warn("Tentativa Firebase Auth:", fbErr?.code);
     }
 
-    // 3. Fallback demo admin
+    // 3. Fallback Dev Direto: micaelbardimtech@gmail.com
+    if (
+      ident === "micaelbardimtech@gmail.com" ||
+      ident === "micaelbardimtech" ||
+      ident === "micaelbardim" ||
+      (ident === "dev" && (pass === "dev" || pass === "123" || pass === "dev123" || pass === "admin" || pass === "admin123"))
+    ) {
+      const devObj = usersList.find((u) => u.email.toLowerCase() === "micaelbardimtech@gmail.com") || INITIAL_USERS[0];
+      setCurrentUser(devObj);
+      localStorage.setItem("propertyhub_user", JSON.stringify(devObj));
+      setActiveTab("dev");
+      setViewingOwnerDetail(null);
+      showToast("⚡ Modo Desenvolvedor ativado com sucesso! Bem-vindo, Micael.");
+      logActivity({
+        actorName: devObj.name,
+        actorEmail: devObj.email,
+        actorRole: "dev",
+        category: "auth",
+        action: "LOGIN_DEV_DIRETO",
+        description: "Acesso de Desenvolvedor autenticado diretamente no sistema.",
+      });
+      setAuthLoading(false);
+      return;
+    }
+
+    // 4. Fallback demo admin
     if ((ident === "admin" || ident === "admin@gestao.com") && (pass === "admin123" || pass === "admin")) {
-      const adminObj = INITIAL_USERS[2];
+      const adminObj = INITIAL_USERS.find((u) => u.role === "admin") || INITIAL_USERS[3];
       setCurrentUser(adminObj);
       localStorage.setItem("propertyhub_user", JSON.stringify(adminObj));
       setActiveTab("dashboard");
       setViewingOwnerDetail(null);
       showToast("Bem-vindo, Administrador!");
+      logActivity({
+        actorName: adminObj.name,
+        actorEmail: adminObj.email,
+        actorRole: "admin",
+        category: "auth",
+        action: "LOGIN_DEMO_ADMIN",
+        description: "Login efetuado com credenciais demo de administrador.",
+      });
       setAuthLoading(false);
       return;
     }
@@ -945,22 +1085,39 @@ export default function App() {
     showToast(`✓ Proprietário ${newOwner.name} gravado no banco com usuário "${cleanUsername}" e senha configurada!`);
   };
 
+  // Helper: Converte a URL do app para o domínio legível e amigável (sem o punycode xn--)
+  const getPrettyAppOrigin = () => {
+    if (typeof window === "undefined") return "https://rjadmlocação.com.br";
+    const host = window.location.host;
+    if (
+      host.includes("xn--rjadmlocao-n5a1c") ||
+      host.includes("rjadmlocacao") ||
+      host.includes("rjadmlocação")
+    ) {
+      return "https://rjadmlocação.com.br";
+    }
+    let current = window.location.origin;
+    current = current.replace(/xn--rjadmlocao-n5a1c\.com\.br/gi, "rjadmlocação.com.br");
+    return current;
+  };
+
   // --- COPIAR CREDENCIAIS DE ACESSO DO PROPRIETÁRIO (WHATSAPP) ---
   const handleCopyOwnerCredentials = (owner: User) => {
-    const origin = window.location.origin + window.location.pathname;
-    const textToCopy = `🔑 *Acesso ao Portal do Proprietário*\n\nOlá ${owner.name}, aqui estão seus dados de acesso:\n🌐 Link: ${origin}\n👤 Usuário: ${owner.username || owner.email}\n🔐 Senha: ${owner.password || "(senha configurada)"}\n\nVocê também pode acessar diretamente por: ${origin}?owner=${owner.id}`;
+    const origin = getPrettyAppOrigin();
+    const directLink = `${origin.replace(/\/+$/, "")}/?owner=${owner.id}`;
+    const textToCopy = `🔑 *Acesso ao Portal do Proprietário*\n\nOlá ${owner.name}, aqui estão seus dados de acesso:\n🌐 Link: ${origin}\n👤 Usuário: ${owner.username || owner.email}\n🔐 Senha: ${owner.password || "(senha configurada)"}\n\nVocê também pode acessar diretamente por: ${directLink}`;
     navigator.clipboard.writeText(textToCopy).then(() => {
-      showToast(`✓ Dados de acesso (Usuário e Senha) de ${owner.name} copiados! Pronto para colar no WhatsApp.`);
+      showToast(`✓ Dados de acesso de ${owner.name} copiados com link rjadmlocação.com.br!`);
     }).catch(() => {
       showToast(`Usuário: ${owner.username} | Senha: ${owner.password}`);
     });
   };
 
   const handleCopyOwnerLink = (owner: User) => {
-    const origin = window.location.origin + window.location.pathname;
-    const directLink = `${origin}?owner=${owner.id}`;
+    const origin = getPrettyAppOrigin();
+    const directLink = `${origin.replace(/\/+$/, "")}/?owner=${owner.id}`;
     navigator.clipboard.writeText(directLink).then(() => {
-      showToast(`✓ Link exclusivo de ${owner.name} copiado! Envie por WhatsApp ou e-mail.`);
+      showToast(`✓ Link exclusivo de ${owner.name} copiado (rjadmlocação.com.br)!`);
     }).catch(() => {
       showToast(`Link de acesso: ${directLink}`);
     });
@@ -1049,7 +1206,13 @@ export default function App() {
     setFormPropAddress("");
     setFormPropUrl("");
     setFormPropListingId("");
-    showToast("✓ Imóvel cadastrado com sucesso no Firebase!");
+    setFormPropImg("");
+    if (activeTour?.tourId === "create_property") {
+      setActiveTour(null);
+      showToast("🎉 Parabéns! Você aprendeu na prática e cadastrou o imóvel por completo!");
+    } else {
+      showToast("✓ Imóvel cadastrado com sucesso no Firebase!");
+    }
   };
 
   // --- DESVINCULAR IMÓVEL DE PROPRIETÁRIO ---
@@ -1141,28 +1304,51 @@ export default function App() {
     setIsPickUnassignedModalOpen(false);
   };
 
-  // --- ABRIR MODAL DE RESERVA RÁPIDA (IMÓVEL E QUARTO JÁ SELECIONADOS!) ---
-  const openQuickReserveModal = (prop: Property, room?: Room) => {
-    setTargetReserveProperty(prop);
-    setTargetReserveRoom(room || prop.rooms[0]);
+  // --- ABRIR MODAL DE RESERVA / VINCULAR RESERVA NO IMÓVEL ---
+  const openQuickReserveModal = (prop?: Property, room?: Room, initialDate?: Date) => {
+    const chosenProp = prop || (properties.length > 0 ? properties[0] : null);
+    setTargetReserveProperty(chosenProp);
+    setTargetReserveRoom(room || (chosenProp?.rooms && chosenProp.rooms.length > 0 ? chosenProp.rooms[0] : null));
     setReserveGuestName("");
+    setReserveStatus("Confirmada");
     
-    // Default dates: tomorrow to +4 days
-    const t = new Date();
-    t.setDate(t.getDate() + 1);
-    const startStr = t.toISOString().split("T")[0];
-    t.setDate(t.getDate() + 4);
-    const endStr = t.toISOString().split("T")[0];
-    setReserveStartDate(startStr);
-    setReserveEndDate(endStr);
+    if (initialDate) {
+      const s = new Date(initialDate);
+      const startStr = s.toISOString().split("T")[0];
+      s.setDate(s.getDate() + 3);
+      const endStr = s.toISOString().split("T")[0];
+      setReserveStartDate(startStr);
+      setReserveEndDate(endStr);
+    } else {
+      // Default dates: tomorrow to +4 days
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      const startStr = t.toISOString().split("T")[0];
+      t.setDate(t.getDate() + 4);
+      const endStr = t.toISOString().split("T")[0];
+      setReserveStartDate(startStr);
+      setReserveEndDate(endStr);
+    }
 
     setIsQuickReserveModalOpen(true);
   };
 
-  // --- SALVAR RESERVA RÁPIDA ---
+  // --- SALVAR RESERVA NO IMÓVEL (COM STATUS: CONFIRMADA OU PENDENTE) ---
   const handleSaveQuickReserve = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetReserveProperty || !targetReserveRoom || !reserveGuestName.trim()) return;
+    if (!targetReserveProperty || !reserveGuestName.trim()) {
+      showToast("Selecione um imóvel e informe o nome do cliente.");
+      return;
+    }
+
+    const assignedRoom = targetReserveRoom || (targetReserveProperty.rooms && targetReserveProperty.rooms.length > 0 ? targetReserveProperty.rooms[0] : {
+      id: "room-default",
+      name: "Acomodação Principal",
+      pricePerNight: targetReserveProperty.basePrice || 250,
+      airbnbCode: "",
+      status: "Disponível" as const,
+      syncDate: "Hoje",
+    });
 
     const sDate = parseDateBR(reserveStartDate);
     const eDate = parseDateBR(reserveEndDate);
@@ -1172,7 +1358,7 @@ export default function App() {
       nights = diff > 0 ? diff : 1;
     }
 
-    const price = targetReserveRoom.pricePerNight || targetReserveProperty.basePrice || 200;
+    const price = assignedRoom.pricePerNight || targetReserveProperty.basePrice || 200;
     const totalAmount = nights * price;
     const newResId = `res-${Date.now()}`;
 
@@ -1189,14 +1375,14 @@ export default function App() {
       guestName: reserveGuestName.trim(),
       propertyId: targetReserveProperty.id,
       propertyName: targetReserveProperty.name.toUpperCase(),
-      roomId: targetReserveRoom.id,
-      roomName: targetReserveRoom.name.toUpperCase(),
+      roomId: assignedRoom.id,
+      roomName: assignedRoom.name.toUpperCase(),
       ownerId: targetReserveProperty.ownerId || "",
       startDate: startFormatted,
       endDate: endFormatted,
       nights,
       totalAmount,
-      status: "Confirmada",
+      status: reserveStatus, // "Confirmada" ou "Pendente"
       channel: "Direto",
       confirmationCode: "RES" + Math.floor(100 + Math.random() * 900) + "X",
     };
@@ -1214,8 +1400,737 @@ export default function App() {
       console.warn("Reserva salva localmente:", err);
     }
 
+    logActivity({
+      actorName: currentUser?.name || "Admin",
+      actorEmail: currentUser?.email || "admin",
+      actorRole: currentUser?.role || "admin",
+      category: "reservation",
+      action: "CRIOU_RESERVA",
+      description: `Reserva vinculada para ${reserveGuestName} no imóvel "${targetReserveProperty.name}" com status ${reserveStatus}.`,
+      details: newRes,
+    });
+
     setIsQuickReserveModalOpen(false);
-    showToast(`✓ Reserva confirmada para ${reserveGuestName}! Quarto ocupado automaticamente no período.`);
+    showToast(`✓ Reserva vinculada com sucesso para ${reserveGuestName}! Status: ${reserveStatus === "Confirmada" ? "Confirmada 🟢" : "Pendente da confirmação 🟡"}`);
+  };
+
+  // --- ALTERAR STATUS DA RESERVA PELO ADMIN (CONFIRMADA x PENDENTE DA CONFIRMAÇÃO) ---
+  const handleUpdateReservationStatus = async (resId: string, newStatus: ReservationStatus) => {
+    setReservations((prev) =>
+      prev.map((r) => (r.id === resId ? { ...r, status: newStatus } : r))
+    );
+
+    try {
+      await updateDoc(doc(db, "reservations", resId), { status: newStatus });
+    } catch (e) {
+      console.warn("Update status Firestore:", e);
+    }
+
+    const target = reservations.find((r) => r.id === resId);
+    showToast(`✓ Status alterado para: ${newStatus === "Confirmada" ? "Confirmada 🟢" : "Pendente da confirmação 🟡"}`);
+
+    await logActivity({
+      actorName: currentUser?.name || "Admin",
+      actorEmail: currentUser?.email || "admin",
+      actorRole: currentUser?.role || "admin",
+      category: "reservation",
+      action: "ALTEROU_STATUS_RESERVA",
+      description: `Status da reserva de "${target?.guestName || resId}" alterado para ${newStatus}.`,
+      details: { reservationId: resId, newStatus },
+    });
+  };
+
+  // --- GESTÃO DE EDIÇÃO DE CONFIGURAÇÕES DO IMÓVEL ---
+  const openEditPropertyModal = (prop: Property) => {
+    setEditingProperty(prop);
+    setEditPropName(prop.name);
+    setEditPropType(prop.type);
+    setEditPropAddress(prop.address);
+    setEditPropCity(prop.city || "");
+    setEditPropOwnerId(prop.ownerId || "");
+    setEditPropUrl(prop.airbnbListingUrl || "");
+    setEditPropListingId(prop.airbnbListingId || "");
+    setEditPropImg(prop.imageUrl || "");
+    setEditPropPrice(prop.basePrice || 250);
+    setEditPropGuests(prop.maxGuests || 4);
+    setEditPropBedrooms(prop.bedrooms || 1);
+    setEditPropBathrooms(prop.bathrooms || 1);
+    setEditPropAmenities(prop.amenities ? prop.amenities.join(", ") : "");
+    const primaryRoom = prop.rooms && prop.rooms.length > 0 ? prop.rooms[0] : null;
+    setEditPropIcal(primaryRoom?.iCalUrl || "");
+    setIsEditPropertyModalOpen(true);
+  };
+
+  const handleSaveEditProperty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProperty || !editPropName.trim()) return;
+
+    const amenitiesList = editPropAmenities
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+
+    const existingRooms = editingProperty.rooms && editingProperty.rooms.length > 0 ? editingProperty.rooms : [];
+    const updatedRooms = existingRooms.length > 0
+      ? existingRooms.map((r, idx) =>
+          idx === 0
+            ? {
+                ...r,
+                pricePerNight: Number(editPropPrice) || r.pricePerNight,
+                iCalUrl: editPropIcal.trim() || undefined,
+              }
+            : r
+        )
+      : [
+          {
+            id: `room-${Date.now()}`,
+            name: "Acomodação Principal",
+            pricePerNight: Number(editPropPrice) || 250,
+            airbnbCode: editPropListingId.trim() || "",
+            status: "Disponível" as const,
+            syncDate: "Hoje",
+            iCalUrl: editPropIcal.trim() || undefined,
+          },
+        ];
+
+    const updatedProp: Property = {
+      ...editingProperty,
+      name: editPropName.trim(),
+      type: editPropType,
+      address: editPropAddress.trim() || "Endereço não informado",
+      city: editPropCity.trim() || "Brasil",
+      ownerId: editPropOwnerId.trim(),
+      imageUrl: editPropImg.trim() || SAMPLE_PHOTOS[0],
+      airbnbListingUrl: editPropUrl.trim() || undefined,
+      airbnbListingId: editPropListingId.trim() || undefined,
+      basePrice: Number(editPropPrice) || 200,
+      maxGuests: Number(editPropGuests) || 2,
+      bedrooms: Number(editPropBedrooms) || 1,
+      bathrooms: Number(editPropBathrooms) || 1,
+      amenities: amenitiesList.length ? amenitiesList : ["Wi-Fi", "Ar-condicionado"],
+      rooms: updatedRooms,
+    };
+
+    setProperties((prev) => prev.map((p) => (p.id === editingProperty.id ? updatedProp : p)));
+
+    try {
+      await updateDoc(doc(db, "properties", editingProperty.id), updatedProp as any);
+    } catch (err) {
+      console.warn("Erro ao atualizar imóvel no Firestore:", err);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Admin",
+      actorEmail: currentUser?.email || "admin",
+      actorRole: currentUser?.role || "admin",
+      category: "property",
+      action: "EDITOU_CONFIGURACOES_IMOVEL",
+      description: `Configurações do imóvel "${updatedProp.name}" foram atualizadas com sucesso.`,
+      details: { propertyId: editingProperty.id },
+    });
+
+    setIsEditPropertyModalOpen(false);
+    showToast(`✓ Configurações do imóvel "${updatedProp.name}" atualizadas com sucesso!`);
+  };
+
+  // --- GESTÃO DE EDIÇÃO DE USUÁRIO (NOME E SENHA) ---
+  const openEditUserModal = (user: User) => {
+    setEditingUser(user);
+    setEditUserName(user.name);
+    setEditUserUsername(user.username || "");
+    setEditUserEmail(user.email);
+    setEditUserPassword(user.password || "");
+    setIsEditUserModalOpen(true);
+  };
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser || !editUserName.trim() || !editUserPassword.trim()) {
+      showToast("Informe o nome e a nova senha do usuário.");
+      return;
+    }
+
+    const updatedUser: User = {
+      ...editingUser,
+      name: editUserName.trim(),
+      username: editUserUsername.trim() || editUserName.trim().toLowerCase().replace(/\s+/g, ""),
+      email: editUserEmail.trim() || editingUser.email,
+      password: editUserPassword.trim(),
+    };
+
+    setUsersList((prev) => prev.map((u) => (u.id === editingUser.id ? updatedUser : u)));
+
+    if (currentUser && currentUser.id === editingUser.id) {
+      setCurrentUser(updatedUser);
+    }
+
+    if (viewingOwnerDetail && viewingOwnerDetail.id === editingUser.id) {
+      setViewingOwnerDetail(updatedUser);
+    }
+
+    try {
+      await updateDoc(doc(db, "users", editingUser.id), {
+        name: updatedUser.name,
+        username: updatedUser.username,
+        email: updatedUser.email,
+        password: updatedUser.password,
+      });
+    } catch (err) {
+      console.warn("Erro ao atualizar usuário no Firestore:", err);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Admin",
+      actorEmail: currentUser?.email || "admin",
+      actorRole: currentUser?.role || "admin",
+      category: "user",
+      action: "EDITOU_USUARIO_SENHA",
+      description: `Dados e credenciais de "${updatedUser.name}" (${updatedUser.role}) foram atualizados.`,
+      details: { userId: editingUser.id },
+    });
+
+    setIsEditUserModalOpen(false);
+    showToast(`✓ Usuário "${updatedUser.name}" atualizado (nova senha salva no banco)!`);
+  };
+
+  // --- PASSOS DO TOUR INTERATIVO COMPLETO PARA CRIAR IMÓVEL ---
+  const tourCreatePropertySteps = [
+    {
+      step: 1,
+      totalSteps: 6,
+      title: "Passo 1/6: Abrir Formulário de Novo Imóvel",
+      description: "Clique no botão destacado '+ Novo Imóvel' no canto superior direito para iniciar o cadastro completo.",
+      actionHint: "Clique no botão '+ Novo Imóvel' pulsando em verde.",
+      targetTab: "properties" as const,
+      targetElementId: "btn-novo-imovel",
+    },
+    {
+      step: 2,
+      totalSteps: 6,
+      title: "Passo 2/6: Título / Nome do Imóvel",
+      description: "Digite o título comercial como ele aparece no Airbnb (ex: 'Apartamento Copacabana com Vista').",
+      actionHint: "Preencha o campo 'Título / Nome do Imóvel' destacado.",
+      targetTab: "properties" as const,
+      targetElementId: "tour-field-prop-name",
+    },
+    {
+      step: 3,
+      totalSteps: 6,
+      title: "Passo 3/6: Categoria e Proprietário",
+      description: "Selecione o tipo do imóvel (Apartamento, Casa, etc.) e vincule a um proprietário ou deixe para vincular depois.",
+      actionHint: "Defina o Tipo de Imóvel e o Proprietário responsável.",
+      targetTab: "properties" as const,
+      targetElementId: "tour-field-prop-type",
+    },
+    {
+      step: 4,
+      totalSteps: 6,
+      title: "Passo 4/6: Endereço Completo & Cidade",
+      description: "Informe a rua, número, bairro e cidade/UF da propriedade.",
+      actionHint: "Preencha os campos de localização destacados.",
+      targetTab: "properties" as const,
+      targetElementId: "tour-field-prop-address",
+    },
+    {
+      step: 5,
+      totalSteps: 6,
+      title: "Passo 5/6: Diária Base e Capacidade",
+      description: "Defina o valor da diária padrão em R$, quantidade máxima de hóspedes, quartos e banheiros.",
+      actionHint: "Defina a diária base (R$) e a lotação máxima de hóspedes.",
+      targetTab: "properties" as const,
+      targetElementId: "tour-field-prop-pricing",
+    },
+    {
+      step: 6,
+      totalSteps: 6,
+      title: "Passo 6/6: Concluir Cadastro no Firebase",
+      description: "Tudo pronto! Clique no botão pulsando 'Salvar Imóvel no Firebase' para gravar o imóvel com sucesso!",
+      actionHint: "Clique no botão 'Salvar Imóvel no Firebase' destacado em verde.",
+      targetTab: "properties" as const,
+      targetElementId: "tour-btn-save-prop",
+    },
+  ];
+
+  const handleTourNextStep = () => {
+    if (!activeTour) return;
+    if (activeTour.tourId === "create_property") {
+      const nextStepNum = activeTour.step + 1;
+      const found = tourCreatePropertySteps.find((s) => s.step === nextStepNum);
+      if (found) {
+        if (nextStepNum >= 2 && !isNewPropertyModalOpen) {
+          setIsNewPropertyModalOpen(true);
+        }
+        setActiveTour({ ...found, tourId: "create_property" });
+      } else {
+        setActiveTour(null);
+        showToast("🎉 Treinamento concluído com sucesso!");
+      }
+    }
+  };
+
+  const handleTourPrevStep = () => {
+    if (!activeTour || activeTour.step <= 1) return;
+    if (activeTour.tourId === "create_property") {
+      const prevStepNum = activeTour.step - 1;
+      const found = tourCreatePropertySteps.find((s) => s.step === prevStepNum);
+      if (found) {
+        setActiveTour({ ...found, tourId: "create_property" });
+      }
+    }
+  };
+
+  const handleTourStepGoTo = (stepNum: number) => {
+    const found = tourCreatePropertySteps.find((s) => s.step === stepNum);
+    if (found) {
+      setActiveTour({ ...found, tourId: "create_property" });
+    }
+  };
+
+  // --- TOUR INTERATIVO PRÁTICO DA WIKI ---
+  const handleStartInteractiveTour = (tourId: "create_property" | "create_reservation" | "assign_owner") => {
+    if (tourId === "create_property") {
+      setActiveTab("properties");
+      setActiveTour({
+        ...tourCreatePropertySteps[0],
+        tourId,
+      });
+      showToast("🚀 Treinamento Guiado: Siga os botões destacados para criar o imóvel completo!");
+    } else if (tourId === "create_reservation") {
+      setActiveTab("calendar");
+      setActiveTour({
+        tourId,
+        step: 1,
+        title: "Passo a Passo: Vincular Reserva no Imóvel",
+        description: "Clique no botão destacado '+ Vincular Reserva no Imóvel' ou clique diretamente em qualquer dia livre do calendário.",
+        actionHint: "Defina o cliente, datas e selecione o status (Confirmada ou Pendente da confirmação).",
+        targetTab: "calendar",
+        targetElementId: "btn-vincular-reserva",
+      });
+      showToast("📅 Guia Interativo: Clique no botão destacado para vincular uma reserva!");
+    } else if (tourId === "assign_owner") {
+      setActiveTab("properties");
+      setActiveTour({
+        tourId,
+        step: 1,
+        title: "Passo a Passo: Vincular Imóvel ao Proprietário",
+        description: "Localize um imóvel com a tarja 'Sem Proprietário' e clique no botão destacado 'Vincular'.",
+        actionHint: "Associe o imóvel ao proprietário cadastrado para gerar o acesso exclusivo dele.",
+        targetTab: "properties",
+        targetElementId: "btn-vincular-dono",
+      });
+      showToast("👥 Guia Interativo: Vincule um imóvel a um proprietário!");
+    }
+  };
+
+  // =========================================
+  // OPERAÇÕES DO DESENVOLVEDOR (DEV DIRETO)
+  // =========================================
+  const handleDevCreateUser = async (userData: Partial<User>) => {
+    const userId = userData.id || `user-${Date.now()}`;
+    const newUser: User = {
+      id: userId,
+      name: userData.name || "Novo Usuário",
+      email: userData.email || "",
+      username: userData.username || "",
+      password: userData.password || "123",
+      role: userData.role || "owner",
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+    setUsersList((prev) => [...prev, newUser]);
+    try {
+      await setDoc(doc(db, "users", userId), newUser);
+    } catch (e) {
+      console.warn("Dev save user Firestore:", e);
+    }
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "user",
+      action: "CRIOU_USUARIO",
+      description: `Dev criou usuário ${newUser.name} (${newUser.email}) com cargo ${newUser.role}.`,
+      details: newUser,
+    });
+  };
+
+  const handleDevUpdateUser = async (userId: string, updates: Partial<User>) => {
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, ...updates } : u))
+    );
+    try {
+      await updateDoc(doc(db, "users", userId), updates);
+    } catch (e) {
+      console.warn("Dev update user Firestore:", e);
+    }
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "user",
+      action: "EDITOU_USUARIO",
+      description: `Dev atualizou dados do usuário ID ${userId}.`,
+      details: updates,
+    });
+  };
+
+  const handleDevDeleteUser = async (userId: string) => {
+    const target = usersList.find((u) => u.id === userId);
+    const updatedProps = properties.map((p) => {
+      if (p.ownerId === userId) return { ...p, ownerId: "" };
+      return p;
+    });
+    setProperties(updatedProps);
+    setUsersList((prev) => prev.filter((u) => u.id !== userId));
+
+    try {
+      for (const p of properties.filter((p) => p.ownerId === userId)) {
+        await updateDoc(doc(db, "properties", p.id), { ownerId: "" });
+      }
+      await deleteDoc(doc(db, "users", userId));
+    } catch (e) {
+      console.warn("Dev delete user Firestore:", e);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "user",
+      action: "EXCLUIU_USUARIO",
+      description: `Dev excluiu usuário ${target?.name || userId} do banco de dados sem precisar de aprovação.`,
+      details: { deletedUserId: userId, userName: target?.name },
+    });
+  };
+
+  const handleDevCreateRoom = async (propertyId: string, roomData: Omit<Room, "id" | "syncDate">) => {
+    const newRoom: Room = {
+      id: `room-${Date.now()}`,
+      syncDate: "Hoje",
+      ...roomData,
+    };
+    const prop = properties.find((p) => p.id === propertyId);
+    const updatedRooms = [...(prop?.rooms || []), newRoom];
+    const updatedProps = properties.map((p) => (p.id === propertyId ? { ...p, rooms: updatedRooms } : p));
+    setProperties(updatedProps);
+
+    try {
+      await updateDoc(doc(db, "properties", propertyId), { rooms: updatedRooms });
+    } catch (e) {
+      console.warn("Dev create room Firestore:", e);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "room",
+      action: "CRIOU_COMODO",
+      description: `Dev adicionou cômodo "${newRoom.name}" no imóvel "${prop?.name || propertyId}".`,
+      details: { propertyId, room: newRoom },
+    });
+  };
+
+  const handleDevUpdateRoom = async (propertyId: string, roomId: string, updates: Partial<Room>) => {
+    const prop = properties.find((p) => p.id === propertyId);
+    if (!prop) return;
+    const updatedRooms = (prop.rooms || []).map((r) => (r.id === roomId ? { ...r, ...updates } : r));
+    const updatedProps = properties.map((p) => (p.id === propertyId ? { ...p, rooms: updatedRooms } : p));
+    setProperties(updatedProps);
+
+    try {
+      await updateDoc(doc(db, "properties", propertyId), { rooms: updatedRooms });
+    } catch (e) {
+      console.warn("Dev update room Firestore:", e);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "room",
+      action: "EDITOU_COMODO",
+      description: `Dev editou cômodo ID ${roomId} no imóvel "${prop.name}".`,
+      details: { propertyId, roomId, updates },
+    });
+  };
+
+  const handleDevDeleteRoom = async (propertyId: string, roomId: string) => {
+    const prop = properties.find((p) => p.id === propertyId);
+    if (!prop) return;
+    const roomToDelete = prop.rooms.find((r) => r.id === roomId);
+    const updatedRooms = prop.rooms.filter((r) => r.id !== roomId);
+    const updatedProps = properties.map((p) => (p.id === propertyId ? { ...p, rooms: updatedRooms } : p));
+    setProperties(updatedProps);
+
+    try {
+      await updateDoc(doc(db, "properties", propertyId), { rooms: updatedRooms });
+    } catch (e) {
+      console.warn("Dev delete room Firestore:", e);
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "room",
+      action: "EXCLUIU_COMODO",
+      description: `Dev excluiu cômodo "${roomToDelete?.name || roomId}" do imóvel "${prop.name}".`,
+      details: { propertyId, roomId },
+    });
+  };
+
+  const handleDevAssignPropertyOwner = async (propertyId: string, ownerId: string) => {
+    const updatedProps = properties.map((p) => (p.id === propertyId ? { ...p, ownerId } : p));
+    setProperties(updatedProps);
+
+    try {
+      await updateDoc(doc(db, "properties", propertyId), { ownerId });
+    } catch (e) {
+      console.warn("Dev assign property Firestore:", e);
+    }
+
+    const prop = properties.find((p) => p.id === propertyId);
+    const owner = usersList.find((u) => u.id === ownerId);
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: currentUser?.role || "dev",
+      category: "property",
+      action: "VINCULOU_IMOVEL",
+      description: ownerId
+        ? `Dev vinculou o imóvel "${prop?.name}" ao proprietário ${owner?.name || ownerId}.`
+        : `Dev desvinculou o imóvel "${prop?.name}", deixando como 'Sem Proprietário'.`,
+      details: { propertyId, ownerId },
+    });
+  };
+
+  // --- RESETS DO BANCO DE DADOS (DEV EXCLUSIVE) ---
+  const handleDevResetUsers = async (mode: "restore_initial" | "clear_owners") => {
+    if (mode === "restore_initial") {
+      setUsersList(INITIAL_USERS);
+      try {
+        for (const u of INITIAL_USERS) {
+          await setDoc(doc(db, "users", u.id), u);
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "RESET_USERS_INICIAIS",
+        description: "Dev restaurou usuários padrão de fábrica no Firestore.",
+      });
+    } else if (mode === "clear_owners") {
+      const remaining = usersList.filter((u) => u.role !== "owner");
+      const removed = usersList.filter((u) => u.role === "owner");
+      setUsersList(remaining);
+      try {
+        for (const o of removed) {
+          await deleteDoc(doc(db, "users", o.id));
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "LIMPAR_PROPRIETARIOS",
+        description: `Dev removeu ${removed.length} proprietários do Firestore mantendo Dev e Admin.`,
+      });
+    }
+  };
+
+  const handleDevResetReservations = async (mode: "clear_all" | "restore_initial" | "clear_by_prop", propertyId?: string) => {
+    if (mode === "clear_all") {
+      const toDelete = [...reservations];
+      setReservations([]);
+      try {
+        for (const r of toDelete) {
+          await deleteDoc(doc(db, "reservations", r.id));
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "ESVAZIAR_AGENDA",
+        description: `Dev esvaziou todas as ${toDelete.length} reservas da agenda no Firestore.`,
+      });
+    } else if (mode === "restore_initial") {
+      setReservations(INITIAL_RESERVATIONS);
+      try {
+        for (const r of INITIAL_RESERVATIONS) {
+          await setDoc(doc(db, "reservations", r.id), r);
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "RESTAURAR_AGENDA_DEMO",
+        description: "Dev restaurou reservas iniciais de teste na agenda.",
+      });
+    } else if (mode === "clear_by_prop" && propertyId) {
+      const prop = properties.find((p) => p.id === propertyId);
+      const toDelete = reservations.filter((r) => r.propertyId === propertyId);
+      setReservations((prev) => prev.filter((r) => r.propertyId !== propertyId));
+      try {
+        for (const r of toDelete) {
+          await deleteDoc(doc(db, "reservations", r.id));
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "LIMPAR_AGENDA_IMOVEL",
+        description: `Dev limpou ${toDelete.length} reservas do imóvel "${prop?.name || propertyId}".`,
+        details: { propertyId },
+      });
+    }
+  };
+
+  const handleDevResetProperties = async (mode: "restore_initial" | "clear_all") => {
+    if (mode === "restore_initial") {
+      setProperties(INITIAL_PROPERTIES);
+      try {
+        for (const p of INITIAL_PROPERTIES) {
+          await setDoc(doc(db, "properties", p.id), p);
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "RESTAURAR_IMOVEIS_INICIAIS",
+        description: "Dev restaurou imóveis padrão de fábrica no Firestore.",
+      });
+    } else if (mode === "clear_all") {
+      const toDelete = [...properties];
+      setProperties([]);
+      try {
+        for (const p of toDelete) {
+          await deleteDoc(doc(db, "properties", p.id));
+        }
+      } catch (e) {}
+      await logActivity({
+        actorName: currentUser?.name || "Dev",
+        actorEmail: currentUser?.email || "dev",
+        actorRole: "dev",
+        category: "database",
+        action: "ESVAZIAR_IMOVEIS",
+        description: `Dev esvaziou todos os ${toDelete.length} imóveis no Firestore.`,
+      });
+    }
+  };
+
+  const handleDevFullFactoryReset = async () => {
+    // 1. Manter APENAS Dev e Admin (exclui todos os proprietários)
+    const devUser: User = {
+      id: "dev-micael",
+      name: "Micael Bardim (Dev)",
+      email: "micaelbardimtech@gmail.com",
+      username: "micaelbardimtech",
+      password: "dev",
+      role: "dev",
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+    const adminUser: User = {
+      id: "admin",
+      name: "Administrador",
+      email: "admin@gestao.com",
+      username: "admin",
+      password: "admin123",
+      role: "admin",
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+
+    // Apagar todos os proprietários do Firestore
+    const ownersToDelete = usersList.filter((u) => u.role === "owner");
+    for (const o of ownersToDelete) {
+      try {
+        await deleteDoc(doc(db, "users", o.id));
+      } catch (e) {
+        console.warn("Delete owner Firestore:", e);
+      }
+    }
+    try {
+      await setDoc(doc(db, "users", devUser.id), devUser);
+      await setDoc(doc(db, "users", adminUser.id), adminUser);
+    } catch (e) {}
+    setUsersList([devUser, adminUser]);
+
+    // 2. Apagar TODOS os imóveis do Firestore
+    const propsToDelete = [...properties];
+    setProperties([]);
+    for (const p of propsToDelete) {
+      try {
+        await deleteDoc(doc(db, "properties", p.id));
+      } catch (e) {
+        console.warn("Delete property Firestore:", e);
+      }
+    }
+
+    // 3. Apagar TODAS as reservas do Firestore
+    const resToDelete = [...reservations];
+    setReservations([]);
+    for (const r of resToDelete) {
+      try {
+        await deleteDoc(doc(db, "reservations", r.id));
+      } catch (e) {
+        console.warn("Delete reservation Firestore:", e);
+      }
+    }
+
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: "dev",
+      category: "database",
+      action: "HARD_RESET_ZEROU_BANCO",
+      description: "Dev executou Reset Total do banco de dados: saíram todos os proprietários, saíram todos os imóveis e todas as reservas. Ficaram apenas Admin e Dev.",
+    });
+
+    showToast("✓ Reset concluído: saíram todos os proprietários e imóveis. Ficaram apenas Admin e Dev!");
+  };
+
+  const handleDevImportBackup = async (backupData: any) => {
+    if (backupData.users && Array.isArray(backupData.users)) {
+      setUsersList(backupData.users);
+      for (const u of backupData.users) {
+        try { await setDoc(doc(db, "users", u.id), u); } catch (e) {}
+      }
+    }
+    if (backupData.properties && Array.isArray(backupData.properties)) {
+      setProperties(backupData.properties);
+      for (const p of backupData.properties) {
+        try { await setDoc(doc(db, "properties", p.id), p); } catch (e) {}
+      }
+    }
+    if (backupData.reservations && Array.isArray(backupData.reservations)) {
+      setReservations(backupData.reservations);
+      for (const r of backupData.reservations) {
+        try { await setDoc(doc(db, "reservations", r.id), r); } catch (e) {}
+      }
+    }
+    await logActivity({
+      actorName: currentUser?.name || "Dev",
+      actorEmail: currentUser?.email || "dev",
+      actorRole: "dev",
+      category: "database",
+      action: "RESTAURACAO_BACKUP_JSON",
+      description: "Dev restaurou backup completo do banco a partir de arquivo JSON.",
+      details: {
+        usersCount: backupData.users?.length,
+        propertiesCount: backupData.properties?.length,
+        reservationsCount: backupData.reservations?.length,
+      },
+    });
   };
 
   // =========================================
@@ -1225,9 +2140,11 @@ export default function App() {
     return (
       <div className="login-screen">
         <div className="login-brand-header">
-          <div className="login-brand-icon">
-            <IconHome size={24} />
-          </div>
+          <img
+            src="/favicon.png"
+            alt="PropertyHub"
+            style={{ width: "52px", height: "52px", objectFit: "contain", filter: "drop-shadow(0 0 12px rgba(16,185,129,0.35))" }}
+          />
           <span className="login-brand-title">PropertyHub</span>
         </div>
 
@@ -1273,46 +2190,7 @@ export default function App() {
             </button>
           </form>
 
-          <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px dashed var(--border-light)" }}>
-            <p style={{ fontSize: "11.5px", color: "var(--text-secondary)", marginBottom: "8px", textAlign: "center" }}>
-              <strong>Acesso Rápido de Teste:</strong>
-            </p>
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "center" }}>
-              <button
-                type="button"
-                className="filter-pill"
-                style={{ fontSize: "11px", padding: "4px 10px" }}
-                onClick={() => {
-                  setLoginIdentifier("admin");
-                  setLoginPassword("admin123");
-                }}
-              >
-                🛡️ Admin (admin)
-              </button>
-              <button
-                type="button"
-                className="filter-pill"
-                style={{ fontSize: "11px", padding: "4px 10px" }}
-                onClick={() => {
-                  setLoginIdentifier("joao");
-                  setLoginPassword("123");
-                }}
-              >
-                👤 João (joao)
-              </button>
-              <button
-                type="button"
-                className="filter-pill"
-                style={{ fontSize: "11px", padding: "4px 10px" }}
-                onClick={() => {
-                  setLoginIdentifier("maria");
-                  setLoginPassword("123");
-                }}
-              >
-                👤 Maria (maria)
-              </button>
-            </div>
-          </div>
+
         </div>
       </div>
     );
@@ -1321,7 +2199,9 @@ export default function App() {
   // =========================================
   // APP LAYOUT (MOBILE RESPONSIVE + DARK MODE)
   // =========================================
+  const isDev = currentUser.role === "dev" || currentUser.email.toLowerCase() === "micaelbardimtech@gmail.com";
   const isAdmin = currentUser.role === "admin";
+  const isAdminOrDev = isAdmin || isDev;
   const firstName = currentUser.name.split(" ")[0];
 
   return (
@@ -1337,9 +2217,11 @@ export default function App() {
       {/* TOPBAR MOBILE */}
       <header className="mobile-topbar">
         <div className="mobile-brand">
-          <div className="sidebar-logo-icon" style={{ width: 28, height: 28 }}>
-            <IconHome size={16} />
-          </div>
+          <img
+            src="/favicon.png"
+            alt="PropertyHub"
+            style={{ width: "26px", height: "26px", objectFit: "contain" }}
+          />
           <span className="mobile-brand-title">PropertyHub</span>
         </div>
 
@@ -1367,13 +2249,15 @@ export default function App() {
       <aside className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-brand">
           <div className="sidebar-logo-row">
-            <div className="sidebar-logo-icon">
-              <IconHome size={18} />
-            </div>
+            <img
+              src="/favicon.png"
+              alt="PropertyHub"
+              style={{ width: "28px", height: "28px", objectFit: "contain", filter: "drop-shadow(0 0 8px rgba(16,185,129,0.3))" }}
+            />
             <span className="sidebar-logo-text">PropertyHub</span>
           </div>
           <span className="sidebar-role-badge">
-            {isAdmin ? "ADMIN" : "PROPRIETÁRIO"}
+            {isDev ? "DEV / ENGENHARIA" : isAdmin ? "ADMIN" : "PROPRIETÁRIO"}
           </span>
         </div>
 
@@ -1387,11 +2271,23 @@ export default function App() {
             }}
           >
             <IconGrid size={18} />
-            <span>{isAdmin ? "Painel Geral" : "Meu Painel"}</span>
+            <span>{isAdminOrDev ? "Painel Geral" : "Meu Painel"}</span>
           </button>
 
-          {/* ABA PROPRIETÁRIOS (APENAS ADMIN) */}
-          {isAdmin && (
+          <button
+            className={`nav-link ${activeTab === "calendar" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("calendar");
+              setViewingOwnerDetail(null);
+              setMobileMenuOpen(false);
+            }}
+          >
+            <IconCalendar size={18} />
+            <span>Calendário / Agenda</span>
+          </button>
+
+          {/* ABA PROPRIETÁRIOS (ADMIN OU DEV) */}
+          {isAdminOrDev && (
             <button
               className={`nav-link ${activeTab === "owners" ? "active" : ""}`}
               onClick={() => {
@@ -1425,11 +2321,11 @@ export default function App() {
               setMobileMenuOpen(false);
             }}
           >
-            <IconCalendar size={18} />
+            <IconBookmark size={18} />
             <span>Reservas</span>
           </button>
 
-          {isAdmin && (
+          {isAdminOrDev && (
             <button
               className={`nav-link ${activeTab === "settings" ? "active" : ""}`}
               onClick={() => {
@@ -1440,6 +2336,36 @@ export default function App() {
             >
               <IconSettings size={18} />
               <span>Configurações</span>
+            </button>
+          )}
+
+          {/* ABA WIKI & GUIA PASSO A PASSO (ADMIN OU DEV) */}
+          {isAdminOrDev && (
+            <button
+              className={`nav-link wiki-link ${activeTab === "wiki" ? "active" : ""}`}
+              onClick={() => {
+                setActiveTab("wiki");
+                setViewingOwnerDetail(null);
+                setMobileMenuOpen(false);
+              }}
+            >
+              <IconBook size={18} />
+              <span>Wiki / Treinamento</span>
+            </button>
+          )}
+
+          {/* ABA EXCLUSIVA DO DEV: LOGS & BANCO DE DADOS */}
+          {isDev && (
+            <button
+              className={`nav-link dev-link ${activeTab === "dev" ? "active" : ""}`}
+              onClick={() => {
+                setActiveTab("dev");
+                setViewingOwnerDetail(null);
+                setMobileMenuOpen(false);
+              }}
+            >
+              <IconTerminal size={18} />
+              <span>Console Dev & DB</span>
             </button>
           )}
         </nav>
@@ -1485,7 +2411,7 @@ export default function App() {
               <div>
                 <h1 className="page-title">Olá, {firstName}!</h1>
                 <p className="page-subtitle">
-                  {isAdmin
+                  {isAdminOrDev
                     ? "Painel Central de Gestão Multi-Propriedades"
                     : "Aqui está o resumo em tempo real dos seus imóveis"}
                 </p>
@@ -1640,6 +2566,14 @@ export default function App() {
                     </button>
                     <button
                       className="btn-secondary"
+                      onClick={() => openEditUserModal(viewingOwnerDetail)}
+                      title="Editar nome, e-mail e redefinir senha deste proprietário"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                    >
+                      <IconEdit size={15} /> Editar Nome e Senha
+                    </button>
+                    <button
+                      className="btn-secondary"
                       onClick={() => handleCopyOwnerLink(viewingOwnerDetail)}
                     >
                       <IconCopy size={15} /> Copiar Link Direto
@@ -1760,6 +2694,15 @@ export default function App() {
                                 </button>
                                 <button
                                   className="btn-secondary"
+                                  onClick={() => openEditPropertyModal(prop)}
+                                  title="Editar Configurações do Imóvel"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+                                >
+                                  <IconEdit size={14} />
+                                  <span>Editar</span>
+                                </button>
+                                <button
+                                  className="btn-secondary"
                                   onClick={() => handleUnlinkProperty(prop.id)}
                                   title="Desvincular deste proprietário"
                                 >
@@ -1847,18 +2790,22 @@ export default function App() {
               <div>
                 <h1 className="page-title">Imóveis Cadastrados</h1>
                 <p className="page-subtitle">
-                  {isAdmin
+                  {isAdminOrDev
                     ? "Gerencie os imóveis do Airbnb, vincule ou desvincule proprietários"
                     : "Todos os seus imóveis disponíveis para locação"}
                 </p>
               </div>
 
-              {isAdmin && (
+              {isAdminOrDev && (
                 <button
-                  className="btn-primary"
+                  id="btn-novo-imovel"
+                  className={`btn-primary ${activeTour?.targetElementId === "btn-novo-imovel" ? "tour-spotlight-highlight" : ""}`}
                   onClick={() => {
                     setFormPropOwnerId("");
                     setIsNewPropertyModalOpen(true);
+                    if (activeTour?.tourId === "create_property" && activeTour.step === 1) {
+                      handleTourStepGoTo(2);
+                    }
                   }}
                 >
                   <IconPlus size={16} /> Novo Imóvel
@@ -1875,7 +2822,7 @@ export default function App() {
                 >
                   Todos ({properties.length})
                 </button>
-                {isAdmin && (
+                {isAdminOrDev && (
                   <>
                     <button
                       className={`filter-pill ${propertyFilter === "assigned" ? "active" : ""}`}
@@ -1959,13 +2906,23 @@ export default function App() {
                       </div>
                     </div>
 
-                    {isAdmin && (
+                    {isAdminOrDev && (
                       <div className="prop-card-actions">
                         <button
                           className="btn-reserve-instant"
                           onClick={() => openQuickReserveModal(prop, primaryRoom)}
                         >
                           <IconCalendar size={15} /> Reservar
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={() => openEditPropertyModal(prop)}
+                          title="Editar Configurações do Imóvel"
+                          style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+                        >
+                          <IconEdit size={14} />
+                          <span>Editar</span>
                         </button>
 
                         {prop.airbnbListingUrl && (
@@ -1981,7 +2938,8 @@ export default function App() {
                         )}
 
                         <button
-                          className="btn-secondary"
+                          id={!isAssigned ? "btn-vincular-dono" : undefined}
+                          className={`btn-secondary ${(!isAssigned && activeTour?.targetElementId === "btn-vincular-dono") ? "tour-spotlight-highlight" : ""}`}
                           onClick={() => openAssignOwnerModal(prop)}
                           title={isAssigned ? "Trocar Proprietário" : "Vincular a um Proprietário"}
                           style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
@@ -2014,6 +2972,25 @@ export default function App() {
               })}
             </div>
           </div>
+        )}
+
+        {/* =========================================
+            TAB: CALENDÁRIO / AGENDA DE OCUPAÇÃO
+           ========================================= */}
+        {activeTab === "calendar" && (
+          <CalendarTab
+            properties={userProperties}
+            reservations={userReservations}
+            usersList={usersList}
+            currentUser={currentUser}
+            isAdmin={isAdminOrDev}
+            onOpenQuickReserve={(prop, room, initialDate) => {
+              openQuickReserveModal(prop, room, initialDate);
+            }}
+            onNavigateToReservations={() => setActiveTab("reservations")}
+            onUpdateReservationStatus={handleUpdateReservationStatus}
+            activeTourElementId={activeTour?.targetElementId}
+          />
         )}
 
         {/* =========================================
@@ -2098,6 +3075,50 @@ export default function App() {
               </div>
             </div>
 
+            {/* MEU PERFIL & ALTERAR SENHA */}
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)", borderRadius: "12px", padding: "24px", maxWidth: "800px", marginBottom: "20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <div>
+                  <h2 style={{ fontSize: "16px", fontWeight: "700", margin: 0 }}>
+                    Meu Perfil & Alterar Senha
+                  </h2>
+                  <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "4px" }}>
+                    Atualize seu nome de exibição e altere sua senha de acesso no banco de dados.
+                  </p>
+                </div>
+                {currentUser && (
+                  <button
+                    className="btn-primary"
+                    onClick={() => openEditUserModal(currentUser)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    <IconEdit size={15} /> Editar Meus Dados / Senha
+                  </button>
+                )}
+              </div>
+
+              {currentUser && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+                  <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Nome Atual</span>
+                    <strong style={{ fontSize: "14px" }}>{currentUser.name}</strong>
+                  </div>
+                  <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>E-mail / Login</span>
+                    <strong style={{ fontSize: "14px" }}>{currentUser.email}</strong>
+                  </div>
+                  <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Usuário</span>
+                    <strong style={{ fontSize: "14px" }}>{currentUser.username || currentUser.email}</strong>
+                  </div>
+                  <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block" }}>Senha Atual</span>
+                    <strong style={{ fontSize: "14px", color: "#10b981" }}>{currentUser.password || "••••••"}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-light)", borderRadius: "12px", padding: "24px", maxWidth: "800px" }}>
               <h2 style={{ fontSize: "16px", fontWeight: "700", marginBottom: "12px" }}>
                 Como Funciona a Conexão Real com o Airbnb
@@ -2131,19 +3152,65 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* =========================================
+            TAB: CONSOLE DEV & BANCO DE DADOS
+           ========================================= */}
+        {activeTab === "dev" && isDev && (
+          <DevTab
+            currentUser={currentUser}
+            usersList={usersList}
+            properties={properties}
+            reservations={reservations}
+            logs={logs}
+            onRefreshLogs={() => {
+              setLogs([...loadLocalLogs()]);
+              showToast("Logs atualizados com sucesso.");
+            }}
+            onClearLogs={() => {
+              clearLocalLogs();
+              setLogs([]);
+            }}
+            onCreateUser={handleDevCreateUser}
+            onUpdateUser={handleDevUpdateUser}
+            onDeleteUser={handleDevDeleteUser}
+            onCreateRoom={handleDevCreateRoom}
+            onUpdateRoom={handleDevUpdateRoom}
+            onDeleteRoom={handleDevDeleteRoom}
+            onAssignPropertyOwner={handleDevAssignPropertyOwner}
+            onResetUsers={handleDevResetUsers}
+            onResetReservations={handleDevResetReservations}
+            onResetProperties={handleDevResetProperties}
+            onFullFactoryReset={handleDevFullFactoryReset}
+            onImportBackup={handleDevImportBackup}
+            showToast={showToast}
+            getPrettyAppOrigin={getPrettyAppOrigin}
+          />
+        )}
+
+        {/* =========================================
+            TAB: WIKI / MANUAL OPERACIONAL PASSO A PASSO
+           ========================================= */}
+        {activeTab === "wiki" && isAdminOrDev && (
+          <WikiTab
+            onStartInteractiveTour={handleStartInteractiveTour}
+            getPrettyAppOrigin={getPrettyAppOrigin}
+            isDev={isDev}
+          />
+        )}
       </main>
 
       {/* =========================================
-          MODAL: RESERVA RÁPIDA (IMÓVEL JÁ SELECIONADO!)
+          MODAL: VINCULAR RESERVA NO IMÓVEL (CLIENTE, DATAS & 2 STATUS)
          ========================================= */}
       {isQuickReserveModalOpen && targetReserveProperty && (
         <div className="modal-overlay" onClick={() => setIsQuickReserveModalOpen(false)}>
-          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-container" style={{ maxWidth: 540 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h3>Reservar Acomodação</h3>
+                <h3>+ Vincular Reserva no Imóvel</h3>
                 <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                  {targetReserveProperty.name} • {targetReserveRoom?.name || "Quarto Principal"}
+                  Defina o imóvel, cômodo, cliente, período e o status de confirmação
                 </span>
               </div>
               <button className="modal-close-btn" onClick={() => setIsQuickReserveModalOpen(false)}>
@@ -2152,7 +3219,52 @@ export default function App() {
             </div>
 
             <form onSubmit={handleSaveQuickReserve}>
-              <div className="modal-body">
+              <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {/* 1. SELEÇÃO DO IMÓVEL */}
+                <label className="form-label">
+                  Selecione o Imóvel Vinculado
+                  <select
+                    className="form-select"
+                    value={targetReserveProperty.id}
+                    onChange={(e) => {
+                      const found = properties.find((p) => p.id === e.target.value);
+                      if (found) {
+                        setTargetReserveProperty(found);
+                        setTargetReserveRoom(found.rooms && found.rooms.length > 0 ? found.rooms[0] : null);
+                      }
+                    }}
+                    required
+                  >
+                    {properties.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* 2. SELEÇÃO DO CÔMODO SE HOUVER */}
+                {targetReserveProperty.rooms && targetReserveProperty.rooms.length > 0 && (
+                  <label className="form-label">
+                    Cômodo / Acomodação
+                    <select
+                      className="form-select"
+                      value={targetReserveRoom?.id || targetReserveProperty.rooms[0].id}
+                      onChange={(e) => {
+                        const r = targetReserveProperty.rooms.find((rm) => rm.id === e.target.value);
+                        if (r) setTargetReserveRoom(r);
+                      }}
+                    >
+                      {targetReserveProperty.rooms.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} — Diária: {formatBRL(r.pricePerNight)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {/* 3. NOME DO CLIENTE */}
                 <label className="form-label">
                   Nome do Hóspede / Cliente
                   <input
@@ -2166,6 +3278,7 @@ export default function App() {
                   />
                 </label>
 
+                {/* 4. DATAS: CHECK-IN E CHECK-OUT */}
                 <div className="form-row">
                   <label className="form-label">
                     Data de Check-in
@@ -2190,6 +3303,63 @@ export default function App() {
                   </label>
                 </div>
 
+                {/* 5. SELEÇÃO DOS 2 STATUS: CONFIRMADA x PENDENTE DA CONFIRMAÇÃO */}
+                <div>
+                  <label className="form-label" style={{ marginBottom: "6px" }}>
+                    Status da Reserva na Agenda (2 Cores):
+                  </label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setReserveStatus("Confirmada")}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: reserveStatus === "Confirmada" ? "2px solid #10b981" : "1px solid var(--border-light)",
+                        background: reserveStatus === "Confirmada" ? "rgba(16, 185, 129, 0.18)" : "var(--bg-card)",
+                        color: reserveStatus === "Confirmada" ? "#10b981" : "var(--text-primary)",
+                        fontWeight: "700",
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <span>🟢 Confirmada</span>
+                      {reserveStatus === "Confirmada" && <span style={{ fontSize: "10px", background: "#10b981", color: "#fff", padding: "1px 6px", borderRadius: "4px" }}>Ativo</span>}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setReserveStatus("Pendente")}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "8px",
+                        border: reserveStatus === "Pendente" ? "2px solid #f59e0b" : "1px solid var(--border-light)",
+                        background: reserveStatus === "Pendente" ? "rgba(245, 158, 11, 0.18)" : "var(--bg-card)",
+                        color: reserveStatus === "Pendente" ? "#f59e0b" : "var(--text-primary)",
+                        fontWeight: "700",
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <span>🟡 Pendente</span>
+                      {reserveStatus === "Pendente" && <span style={{ fontSize: "10px", background: "#f59e0b", color: "#fff", padding: "1px 6px", borderRadius: "4px" }}>Ativo</span>}
+                    </button>
+                  </div>
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px", display: "block" }}>
+                    {reserveStatus === "Confirmada"
+                      ? "🟢 Aparecerá em verde na agenda como reserva garantida."
+                      : "🟡 Aparecerá em amarelo/laranja na agenda como aguardando confirmação (o admin pode confirmar depois)."}
+                  </span>
+                </div>
+
                 <div style={{ padding: "12px", background: "var(--bg-app)", borderRadius: "8px", fontSize: "12px", color: "var(--text-secondary)" }}>
                   💡 <strong>Automação de Disponibilidade:</strong> Durante o período informado, o imóvel será marcado como <strong>Ocupado Agora</strong>. Assim que a data de check-out expirar, ele volta a ficar <strong>Disponível Hoje</strong> automaticamente.
                 </div>
@@ -2203,8 +3373,8 @@ export default function App() {
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="btn-primary">
-                  Confirmar Reserva
+                <button type="submit" className="btn-primary" style={{ padding: "10px 20px" }}>
+                  Confirmar e Vincular Reserva
                 </button>
               </div>
             </form>
@@ -2227,7 +3397,7 @@ export default function App() {
 
             <form onSubmit={handleCreateProperty}>
               <div className="modal-body">
-                <label className="form-label">
+                <label id="tour-field-prop-name" className={`form-label ${activeTour?.targetElementId === "tour-field-prop-name" ? "tour-spotlight-highlight" : ""}`}>
                   Título / Nome do Imóvel no Airbnb
                   <input
                     className="form-input"
@@ -2239,7 +3409,7 @@ export default function App() {
                   />
                 </label>
 
-                <div className="form-row">
+                <div id="tour-field-prop-type" className={`form-row ${activeTour?.targetElementId === "tour-field-prop-type" ? "tour-spotlight-highlight" : ""}`}>
                   <label className="form-label">
                     Tipo de Imóvel
                     <select
@@ -2272,7 +3442,7 @@ export default function App() {
                   </label>
                 </div>
 
-                <div className="form-row">
+                <div id="tour-field-prop-address" className={`form-row ${activeTour?.targetElementId === "tour-field-prop-address" ? "tour-spotlight-highlight" : ""}`}>
                   <label className="form-label">
                     Endereço Completo
                     <input
@@ -2321,7 +3491,7 @@ export default function App() {
                   </label>
                 </div>
 
-                <div className="form-row-3">
+                <div id="tour-field-prop-pricing" className={`form-row-3 ${activeTour?.targetElementId === "tour-field-prop-pricing" ? "tour-spotlight-highlight" : ""}`}>
                   <label className="form-label">
                     Diária Base (R$)
                     <input
@@ -2367,16 +3537,101 @@ export default function App() {
                   </label>
                 </div>
 
-                <label className="form-label">
-                  Foto de Capa (URL da Imagem)
+                <div style={{ marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", flexWrap: "wrap", gap: "6px" }}>
+                    <label className="form-label" style={{ marginBottom: 0, fontWeight: "600" }}>
+                      Foto de Capa (Link Direto da Imagem)
+                    </label>
+                    <a
+                      href="https://postimages.org/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontSize: "12px",
+                        padding: "5px 11px",
+                        background: "rgba(37, 99, 235, 0.08)",
+                        color: "#2563eb",
+                        border: "1px solid rgba(37, 99, 235, 0.25)",
+                        borderRadius: "8px",
+                        textDecoration: "none",
+                        fontWeight: "600",
+                        cursor: "pointer"
+                      }}
+                      title="Clique para abrir o PostImages em uma nova aba e hospedar fotos gratuitamente"
+                    >
+                      <span>📷 Abrir gerador PostImages ↗</span>
+                    </a>
+                  </div>
+
                   <input
                     className="form-input"
                     type="url"
-                    placeholder="https://..."
+                    placeholder="Ex: https://i.postimg.cc/.../foto.jpg"
                     value={formPropImg}
                     onChange={(e) => setFormPropImg(e.target.value)}
                   />
-                </label>
+
+                  <p style={{ fontSize: "11.5px", color: "var(--text-secondary)", marginTop: "4px", marginBottom: "8px" }}>
+                    💡 <strong>Como usar:</strong> No PostImages, faça upload da foto e copie o <strong>"Link direto"</strong> (ex: com final <code>.jpg</code> ou <code>.png</code>).
+                  </p>
+
+                  {formPropImg.trim() && (
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        padding: "8px 12px",
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                      }}
+                    >
+                      <img
+                        src={formPropImg.trim()}
+                        alt="Prévia do Imóvel"
+                        style={{
+                          width: "72px",
+                          height: "52px",
+                          objectFit: "cover",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border-light)",
+                          flexShrink: 0,
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = SAMPLE_PHOTOS[0];
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: "12px", color: "var(--color-success)", fontWeight: "600", display: "flex", alignItems: "center", gap: "4px" }}>
+                          ✓ Imagem carregada com sucesso
+                        </span>
+                        <p style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: "2px 0 0 0" }}>
+                          {formPropImg}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFormPropImg("")}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-danger, #ef4444)",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          fontWeight: "600",
+                          padding: "4px 8px",
+                        }}
+                      >
+                        Limpar
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <label className="form-label">
                   Comodidades (Separadas por vírgula)
@@ -2409,7 +3664,11 @@ export default function App() {
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="btn-primary">
+                <button
+                  id="tour-btn-save-prop"
+                  type="submit"
+                  className={`btn-primary ${activeTour?.targetElementId === "tour-btn-save-prop" ? "tour-spotlight-highlight" : ""}`}
+                >
                   Salvar Imóvel no Firebase
                 </button>
               </div>
@@ -2496,6 +3755,394 @@ export default function App() {
                 </button>
                 <button type="submit" className="btn-primary">
                   Cadastrar Proprietário
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================
+          MODAL: EDITAR CONFIGURAÇÕES DO IMÓVEL
+         ========================================= */}
+      {isEditPropertyModalOpen && editingProperty && (
+        <div className="modal-overlay" onClick={() => setIsEditPropertyModalOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 680 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>⚙️ Configurações do Imóvel</h3>
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  {editingProperty.name}
+                </span>
+              </div>
+              <button className="modal-close-btn" onClick={() => setIsEditPropertyModalOpen(false)}>
+                <IconClose size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditProperty}>
+              <div className="modal-body">
+                <label className="form-label">
+                  Título / Nome do Imóvel no Airbnb
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={editPropName}
+                    onChange={(e) => setEditPropName(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <div className="form-row">
+                  <label className="form-label">
+                    Tipo de Imóvel
+                    <select
+                      className="form-select"
+                      value={editPropType}
+                      onChange={(e) => setEditPropType(e.target.value as PropertyType)}
+                    >
+                      <option value="APARTAMENTO">Apartamento</option>
+                      <option value="CASA">Casa</option>
+                      <option value="STUDIO">Studio / Flat</option>
+                      <option value="CHALÉ">Chalé / Cabana</option>
+                      <option value="COBERTURA">Cobertura</option>
+                    </select>
+                  </label>
+
+                  <label className="form-label">
+                    Proprietário Vinculado
+                    <select
+                      className="form-select"
+                      value={editPropOwnerId}
+                      onChange={(e) => setEditPropOwnerId(e.target.value)}
+                    >
+                      <option value="">⚠️ Sem Proprietário (Gestão Própria)</option>
+                      {ownersList.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name} ({o.email})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label className="form-label">
+                    Endereço Completo
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={editPropAddress}
+                      onChange={(e) => setEditPropAddress(e.target.value)}
+                      required
+                    />
+                  </label>
+
+                  <label className="form-label">
+                    Cidade / UF
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={editPropCity}
+                      onChange={(e) => setEditPropCity(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label className="form-label">
+                    Link do Anúncio no Airbnb (URL)
+                    <input
+                      className="form-input"
+                      type="url"
+                      placeholder="https://www.airbnb.com.br/rooms/123456"
+                      value={editPropUrl}
+                      onChange={(e) => setEditPropUrl(e.target.value)}
+                    />
+                  </label>
+
+                  <label className="form-label">
+                    ID / Código do Anúncio Airbnb
+                    <input
+                      className="form-input"
+                      type="text"
+                      placeholder="123456"
+                      value={editPropListingId}
+                      onChange={(e) => setEditPropListingId(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row-3">
+                  <label className="form-label">
+                    Diária Base (R$)
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={editPropPrice}
+                      onChange={(e) => setEditPropPrice(Number(e.target.value))}
+                    />
+                  </label>
+
+                  <label className="form-label">
+                    Hóspedes Máx.
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={editPropGuests}
+                      onChange={(e) => setEditPropGuests(Number(e.target.value))}
+                    />
+                  </label>
+
+                  <label className="form-label">
+                    Quartos
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={editPropBedrooms}
+                      onChange={(e) => setEditPropBedrooms(Number(e.target.value))}
+                    />
+                  </label>
+
+                  <label className="form-label">
+                    Banheiros
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={editPropBathrooms}
+                      onChange={(e) => setEditPropBathrooms(Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px", flexWrap: "wrap", gap: "6px" }}>
+                    <label className="form-label" style={{ marginBottom: 0, fontWeight: "600" }}>
+                      Foto de Capa (Link Direto da Imagem)
+                    </label>
+                    <a
+                      href="https://postimages.org/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontSize: "12px",
+                        padding: "5px 11px",
+                        background: "rgba(37, 99, 235, 0.08)",
+                        color: "#2563eb",
+                        border: "1px solid rgba(37, 99, 235, 0.25)",
+                        borderRadius: "8px",
+                        textDecoration: "none",
+                        fontWeight: "600",
+                        cursor: "pointer"
+                      }}
+                      title="Clique para abrir o PostImages e hospedar fotos"
+                    >
+                      <span>📷 Abrir gerador PostImages ↗</span>
+                    </a>
+                  </div>
+
+                  <input
+                    className="form-input"
+                    type="url"
+                    placeholder="https://i.postimg.cc/.../foto.jpg"
+                    value={editPropImg}
+                    onChange={(e) => setEditPropImg(e.target.value)}
+                  />
+
+                  {editPropImg.trim() && (
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        padding: "8px 12px",
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                      }}
+                    >
+                      <img
+                        src={editPropImg.trim()}
+                        alt="Prévia do Imóvel"
+                        style={{
+                          width: "72px",
+                          height: "52px",
+                          objectFit: "cover",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border-light)",
+                          flexShrink: 0,
+                        }}
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = SAMPLE_PHOTOS[0];
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontSize: "12px", color: "var(--color-success)", fontWeight: "600" }}>
+                          ✓ Prévia da Foto Atualizada
+                        </span>
+                        <p style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: "2px 0 0 0" }}>
+                          {editPropImg}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEditPropImg("")}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-danger, #ef4444)",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          fontWeight: "600",
+                        }}
+                      >
+                        Limpar
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <label className="form-label">
+                  Comodidades (Separadas por vírgula)
+                  <input
+                    className="form-input"
+                    type="text"
+                    placeholder="Wi-Fi, Ar-condicionado, Piscina, Estacionamento"
+                    value={editPropAmenities}
+                    onChange={(e) => setEditPropAmenities(e.target.value)}
+                  />
+                </label>
+
+                <label className="form-label">
+                  Link iCal do Calendário Airbnb (Sincronização Automática)
+                  <input
+                    className="form-input"
+                    type="url"
+                    placeholder="https://www.airbnb.com.br/calendar/ical/..."
+                    value={editPropIcal}
+                    onChange={(e) => setEditPropIcal(e.target.value)}
+                  />
+                </label>
+
+                {/* Exibição dos Cômodos / Quartos Cadastrados */}
+                {editingProperty.rooms && editingProperty.rooms.length > 0 && (
+                  <div style={{ marginTop: "12px", padding: "12px", background: "var(--bg-app)", borderRadius: "8px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: "700", display: "block", marginBottom: "6px" }}>
+                      🛏️ Cômodos Cadastrados ({editingProperty.rooms.length}):
+                    </span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      {editingProperty.rooms.map((room) => (
+                        <div key={room.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", padding: "6px 10px", background: "var(--bg-card)", borderRadius: "6px", border: "1px solid var(--border-light)" }}>
+                          <span><strong>{room.name}</strong> ({room.status})</span>
+                          <span style={{ color: "var(--color-success)", fontWeight: "600" }}>{formatBRL(room.pricePerNight)}/noite</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIsEditPropertyModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-primary">
+                  Salvar Alterações no Firebase
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================
+          MODAL: EDITAR USUÁRIO (NOME E SENHA)
+         ========================================= */}
+      {isEditUserModalOpen && editingUser && (
+        <div className="modal-overlay" onClick={() => setIsEditUserModalOpen(false)}>
+          <div className="modal-container" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3>👤 Editar Usuário & Senha</h3>
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  {editingUser.name} ({editingUser.role.toUpperCase()})
+                </span>
+              </div>
+              <button className="modal-close-btn" onClick={() => setIsEditUserModalOpen(false)}>
+                <IconClose size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditUser}>
+              <div className="modal-body">
+                <label className="form-label">
+                  Nome Completo
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={editUserName}
+                    onChange={(e) => setEditUserName(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="form-label">
+                  Nome de Usuário (Username para Login)
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={editUserUsername}
+                    onChange={(e) => setEditUserUsername(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="form-label">
+                  E-mail de Cadastro
+                  <input
+                    className="form-input"
+                    type="email"
+                    value={editUserEmail}
+                    onChange={(e) => setEditUserEmail(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="form-label">
+                  Senha de Acesso no Banco de Dados
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={editUserPassword}
+                    onChange={(e) => setEditUserPassword(e.target.value)}
+                    placeholder="Digite a nova senha"
+                    required
+                  />
+                </label>
+
+                <div style={{ padding: "12px", background: "rgba(16, 185, 129, 0.1)", borderRadius: "8px", fontSize: "12px", color: "#047857", border: "1px solid rgba(16, 185, 129, 0.25)" }}>
+                  🔐 <strong>Senha Salva no Firestore:</strong> Ao salvar, o usuário poderá se autenticar imediatamente com essa nova senha.
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setIsEditUserModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="btn-primary">
+                  Salvar Alterações
                 </button>
               </div>
             </form>
@@ -2682,6 +4329,63 @@ export default function App() {
                 Fechar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================
+          GUIA INTERATIVO PRÁTICO (WIKI TOUR OVERLAY)
+         ========================================= */}
+      {activeTour && (
+        <div className="tour-floating-guide animate-slide-up">
+          <div className="tour-guide-badge">
+            <span className="tour-beacon-dot" />
+            <span>GUIA INTERATIVO PRÁTICO • PASSO {activeTour.step} DE {activeTour.totalSteps || 6}</span>
+          </div>
+          <div className="tour-guide-content">
+            <h4 className="tour-guide-title">{activeTour.title}</h4>
+            <p className="tour-guide-desc">{activeTour.description}</p>
+            <div className="tour-guide-hint">
+              👉 <strong>Ação Prática:</strong> {activeTour.actionHint}
+            </div>
+          </div>
+          <div className="tour-guide-actions">
+            {activeTour.step > 1 && (
+              <button
+                type="button"
+                className="btn-tour-step"
+                onClick={handleTourPrevStep}
+              >
+                ⬅ Voltar Passo
+              </button>
+            )}
+            {activeTour.step < (activeTour.totalSteps || 6) && (
+              <button
+                type="button"
+                className="btn-tour-step-primary"
+                onClick={handleTourNextStep}
+              >
+                Próximo Passo ➡
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-tour-wiki"
+              onClick={() => {
+                setActiveTab("wiki");
+                setActiveTour(null);
+              }}
+            >
+              📚 Voltar à Wiki
+            </button>
+            <button
+              type="button"
+              className="btn-tour-close"
+              onClick={() => setActiveTour(null)}
+              title="Encerrar treinamento"
+            >
+              ✕ Sair
+            </button>
           </div>
         </div>
       )}
